@@ -60,6 +60,7 @@ services:
       # La credencial, desde el entorno y NUNCA dentro de filebeat.yml, que sí está en Git.
       # Se saca de elastic-real/secretos/clave-python — mira .env.example.
       ELASTIC_API_KEY: ${ELASTIC_API_KEY:?ELASTIC_API_KEY missing in .env - see .env.example}
+      ELASTIC_HOST: ${ELASTIC_HOST:?ELASTIC_HOST missing in .env}
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       # Donde Docker guarda el stdout de cada contenedor, como ficheros JSON. Solo lectura:
