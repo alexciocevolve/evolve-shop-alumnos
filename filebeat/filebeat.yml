@@ -39,7 +39,7 @@ filebeat.inputs:
           when:
             not:
               equals:
-                container.labels.com_docker_compose_project: "tienda"
+                container.labels.com_docker_compose_project: "evolve-shop-alumnos"
 
       # Y EL COLECTOR SE MARCA, PARA APARTARLO SIN PERDERLO.
       #
@@ -98,7 +98,7 @@ processors:
 output.elasticsearch:
   # `elasticsearch` es el nombre del servicio EN EL OTRO PROYECTO, y se resuelve porque
   # este contenedor está conectado también a la red `elastic-real_default`.
-  hosts: ["http://elasticsearch:9200"]
+  hosts: ["http://${ELASTIC_HOST}:9200"]
 
   # La credencial, leída del entorno. Nunca escrita aquí: este fichero está en Git y una
   # clave dentro de un fichero versionado ya está comprometida, aunque se borre después
