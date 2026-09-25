@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import CORS_ORIGINS
 from app.observability import configure_logging, log, log_requests
 from app.routes import products
 
@@ -11,11 +12,13 @@ configure_logging()
 
 app = FastAPI(title="Shop API")
 
-# The browser treats localhost:5173 (Vite) and localhost:8000 (this API) as different
-# origins, so the API has to say explicitly that the frontend may call it.
+# The browser treats the page's origin (e.g. localhost:5173, Vite) and this API's origin
+# (localhost:8000) as different, so the API has to say explicitly which pages may call it.
+# The list comes from the CORS_ORIGINS environment variable, so deploying the frontend
+# somewhere else means changing configuration, not code.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
