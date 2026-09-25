@@ -1,0 +1,154 @@
+# How the logs get from the containers' stdout into Elasticsearch.
+#
+# Filebeat does one thing: it tails files and posts what it finds. It knows nothing about
+# this shop, and the shop knows nothing about it. That is the point of the arrangement -
+# either one can be replaced without the other noticing.
+
+filebeat.inputs:
+  # Docker writes every container's stdout to a JSON file on the host; this reads those
+  # files.
+  #
+  # `filestream` and NOT `container`, which is what every tutorial still shows and what
+  # this file said first. Filebeat 9 removed it and refuses to start:
+  #
+  #     Exiting: Failed to start crawler: Container input is deprecated.
+  #     Use Filestream input with its container parser instead.
+  #
+  # A good error, for once: it says what is wrong AND what to do. The container parser
+  # below is the replacement - it unwraps Docker's own JSON envelope, leaving the line the
+  # application actually printed in `message`.
+  - type: filestream
+    # filestream requires a stable id of its own: it is the key under which Filebeat
+    # remembers how far it has read. Change it and everything is re-sent from the start.
+    id: docker-container-logs
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    parsers:
+      - container: ~
+    prospector.scanner.symlinks: true
+
+    processors:
+      # Ask Docker who wrote each line. Without this a log says only which 64-character
+      # container id produced it, which is useless the moment the container is recreated.
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+
+      # SOLO LOS CONTENEDORES DE ESTA TIENDA. Filebeat lee
+      # /var/lib/docker/containers/*/*.log, que es TODO lo que corra en esta máquina.
+      - drop_event:
+          when:
+            not:
+              equals:
+                container.labels.com_docker_compose_project: "tienda"
+
+      # Y EL COLECTOR SE MARCA, PARA APARTARLO SIN PERDERLO.
+      #
+      # Filebeat también lee su propia salida — un bucle que mete su informe de métricas
+      # cada 30 segundos en el stream de la tienda. Es lo primero que aparece al abrir
+      # Kibana y hace pensar que la integración no funciona.
+      #
+      # La tentación es tirarlo, y estuvo tirado un rato. Es un error: si Filebeat empieza
+      # a fallar, SUS LOGS SON LA ÚNICA FORMA DE ENTERARSE. Tirarlos es quedarse sin el
+      # aviso de que has dejado de recibir avisos, que es la peor forma de estar ciego
+      # porque parece que todo va bien.
+      #
+      # Así que se marca aquí, mientras las etiquetas todavía existen, y la salida de más
+      # abajo lo manda a un stream propio.
+      - add_fields:
+          when:
+            equals:
+              container.labels.com_docker_compose_service: "filebeat"
+          target: ""
+          fields:
+            shop.log_source: collector
+
+      # The shop already writes JSON. This unpacks it into real fields, so `status` and
+      # `duration_ms` can be filtered and averaged instead of being text inside a string.
+      #
+      # `message` because that is where the `container` input puts the line;
+      # `add_error_key` so that a line that is NOT valid JSON - a stack trace from uvicorn,
+      # a panic from Postgres - arrives with an error field instead of being dropped.
+      # Losing exactly the lines that are not well behaved would be the worst possible
+      # failure mode for a logging system.
+      - decode_json_fields:
+          fields: ["message"]
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+
+      # Las etiquetas de la imagen: cincuenta campos de Docker, Red Hat y compose que son
+      # la mayor parte del tamaño de cada documento y no dicen nada de la tienda. Se van
+      # DESPUÉS de los `drop_event` de arriba, que sí las necesitan para decidir.
+      - drop_fields:
+          fields: ["container.labels"]
+          ignore_missing: true
+
+# GLOBAL processors, and the position matters. These first lived inside the input above and
+# did nothing at all: the fields they remove are added by libbeat AFTER an input's own
+# processors have run, so there was nothing to drop yet. Here they run at the end, on the
+# finished document, and the fields go.
+#
+# What goes: everything Filebeat knows about itself and its host. Interesting across a fleet
+# of servers, noise on one laptop, and between them most of the size of every document.
+processors:
+  - drop_fields:
+      fields: ["agent", "ecs", "input", "host", "log.offset", "log.file"]
+      ignore_missing: true
+
+output.elasticsearch:
+  # `elasticsearch` es el nombre del servicio EN EL OTRO PROYECTO, y se resuelve porque
+  # este contenedor está conectado también a la red `elastic-real_default`.
+  hosts: ["http://elasticsearch:9200"]
+
+  # La credencial, leída del entorno. Nunca escrita aquí: este fichero está en Git y una
+  # clave dentro de un fichero versionado ya está comprometida, aunque se borre después
+  # — sigue en el historial.
+  #
+  # Es la API key que crea el `preparar.sh` de elastic-real, cuyo alcance son los índices
+  # `logs-*` y `hola-*`. De ahí el nombre del stream de abajo.
+  api_key: "${ELASTIC_API_KEY}"
+
+  # El destino por defecto. `logs-` no es decoración: es el prefijo que Elastic usa por
+  # convención para los data streams de logs, y es lo que hace que la API key y el usuario
+  # `clase` de Kibana tengan permiso sin tocar nada de elastic-real.
+  index: "logs-shop-evolve"
+
+  # Y el desvío. `indices` se evalúa ANTES que `index`: la primera condición que encaja
+  # decide, y si no encaja ninguna se usa el de arriba.
+  #
+  # Dos streams, dos audiencias. `logs-shop-evolve` responde preguntas sobre la tienda;
+  # `logs-shop-filebeat` responde una sola, y hace falta: ¿sigue funcionando el que trae
+  # todo lo demás? Mezclarlos es lo que hace que la segunda tape a las primeras.
+  indices:
+    - index: "logs-shop-filebeat"
+      when:
+        equals:
+          shop.log_source: "collector"
+
+# NADA DE PLANTILLAS, y esto es lo que hace que todo lo de arriba funcione sin pedir
+# permisos que la tienda no debe tener.
+#
+# Filebeat, por su cuenta, quiere dos cosas: gestionar el ciclo de vida del índice (ILM) y
+# crear su propia plantilla. Las dos fallan aquí, cada una a su manera:
+#
+#   · Con ILM encendido, un `index:` propio se IGNORA EN SILENCIO. Ni error ni aviso: los
+#     logs simplemente aparecen en `filebeat-9.5.3-...` en vez de donde se pidió.
+#   · Y crear una plantilla exige el privilegio de clúster `manage_index_templates`. La API
+#     key de esta tienda solo tiene `monitor`, así que Elasticsearch contesta 403 y Filebeat
+#     no llega ni a conectarse.
+#
+# La salida no es dar más permisos a la tienda: es no necesitarlos. Elasticsearch YA TRAE
+# una plantilla llamada `logs`, con patrón `logs-*-*` y data stream activado. Y
+# `logs-shop-evolve` encaja con ese patrón — `logs-` + `shop` + `-` + `evolve`.
+#
+# O sea que el nombre no era un detalle estético: ES LA CONFIGURACIÓN. Elegirlo según la
+# convención de Elastic regala el data stream, el ciclo de vida y el mapeo, y deja a la
+# tienda con la credencial mínima que necesita para escribir y nada más.
+setup.ilm.enabled: false
+setup.template.enabled: false
+
+# Filebeat also ships dashboards and index templates for dozens of products it knows about.
+# None of them apply here and they take a long time to load.
+setup.dashboards.enabled: false
+
+logging.level: info

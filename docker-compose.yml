@@ -1,0 +1,98 @@
+# La tienda. Tres servicios, y ninguno de ellos es Elasticsearch.
+#
+#   db         la base de datos
+#   backend    la API. En un contenedor porque un colector lee el stdout de un CONTENEDOR
+#   filebeat   recoge ese stdout y lo manda a un Elasticsearch QUE NO ES NUESTRO
+#
+# ELASTICSEARCH Y KIBANA VIVEN APARTE, en el conjunto `elastic-real` de la sesión 24. Eso
+# no es una comodidad, es el modelo correcto y merece decirse en clase: el sitio donde se
+# guardan los logs es infraestructura compartida, con su propio ciclo de vida, su propia
+# gente y su propia factura. No se levanta y se tira con cada aplicación que quiera
+# escribir en él, igual que nadie levanta su propio Postgres dentro del contenedor de su
+# API.
+#
+# Lo que queda aquí es lo único que es de la tienda: quién recoge SUS logs y a dónde los
+# manda. Y ni siquiera eso lo sabe la tienda — lo sabe Filebeat.
+#
+#   cd ../python-demo/sesion-24/elastic-real && docker compose up -d   # primero, el destino
+#   docker compose up -d --build                                       # luego, la tienda
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing in .env}
+    volumes:
+      - shop_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    ports:
+      # 127.0.0.1 y no solo "5432:5432". Sin la dirección, un puerto publicado escucha en
+      # TODAS las interfaces, incluida la wifi en la que estés. Con ella, solo esta máquina.
+      - "127.0.0.1:5432:5432"
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      # Qué dicen los logs sobre de dónde vienen. La tienda lo estampa en cada línea, así
+      # que un mismo Elasticsearch puede tener desarrollo y producción sin mezclarlos.
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:9.5.3
+    # Corre como root porque lee los ficheros de log de otros contenedores, que son de
+    # root, y habla con el socket de Docker para saber de qué contenedor viene cada línea.
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    environment:
+      # La credencial, desde el entorno y NUNCA dentro de filebeat.yml, que sí está en Git.
+      # Se saca de elastic-real/secretos/clave-python — mira .env.example.
+      ELASTIC_API_KEY: ${ELASTIC_API_KEY:?ELASTIC_API_KEY missing in .env - see .env.example}
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # Donde Docker guarda el stdout de cada contenedor, como ficheros JSON. Solo lectura:
+      # un colector no tiene nada que escribir aquí.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # El socket, para preguntarle a Docker el NOMBRE del contenedor detrás de cada
+      # fichero. Sin él cada línea llegaría etiquetada con un id de 64 caracteres y poco más.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # El marcador de por dónde va leyendo. Sin este volumen, un reinicio reenvía todo
+      # desde el principio y los logs salen duplicados.
+      - shop_filebeatdata:/usr/share/filebeat/data
+    networks:
+      # Las dos, y esta es la parte que hay que entender. Un proyecto de compose crea su
+      # propia red y no ve las de los demás: desde `tienda_default` el nombre
+      # `elasticsearch` no existe, porque vive en otro proyecto.
+      #
+      # Tampoco sirve salir por el host: elastic-real publica el 9200 en 127.0.0.1, y el
+      # localhost de un contenedor es el suyo, no el tuyo.
+      #
+      # Así que Filebeat se conecta a LAS DOS redes. Es el único servicio que lo necesita,
+      # y es exactamente lo que es: la pieza que une dos sistemas que por lo demás no se
+      # conocen.
+      - default
+      - elastic-real
+
+networks:
+  # `external: true` significa: esta red ya existe, no la crees y no la borres. La crea
+  # `docker compose up` en ../python-demo/sesion-24/elastic-real, y si ese conjunto no está
+  # levantado, la tienda se niega a arrancar con un error que lo dice.
+  elastic-real:
+    external: true
+    name: elastic-real_default
+
+volumes:
+  shop_pgdata:
+  shop_filebeatdata:
