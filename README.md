@@ -1,8 +1,7 @@
 # Tienda didáctica
 
 Una tienda en línea pequeña para aprender un stack completo: **React + FastAPI + SQLAlchemy + PostgreSQL**.
-Se construye por *checkpoints*, en orden; cada uno termina con un commit y un tag de Git. El plan
-completo (requisitos, decisiones y guion de clase) está en [`PLAN.md`](PLAN.md).
+Se construye por *checkpoints*, en orden; cada uno termina con un commit y un tag de Git.
 
 > El código, los comentarios, los mensajes de commit y los textos de pantalla están en inglés.
 > El castellano queda solo para este README y para `PLAN.md`.
@@ -11,7 +10,6 @@ completo (requisitos, decisiones y guion de clase) está en [`PLAN.md`](PLAN.md)
 
 - Docker (con Compose)
 - Python 3.12 o superior
-- Node.js 20 o superior
 
 ## Arranque
 
@@ -45,12 +43,9 @@ cd frontend && npm install && npm run dev
 
 | Tag | Revisión Alembic | Qué se enseña | Estado |
 |---|---|---|---|
-| `cp1-catalog` | `001_products` | Una tabla bien hecha, un endpoint paginado, un listado que carga más al hacer scroll | hecho |
-| `cp2-cart` | `002_cart_and_orders` | Carrito (mutable, efímero) frente a pedido (inmutable, precio congelado) | pendiente |
-| `cp3-users` | `003_users_and_addresses` | Usuario, dirección de envío y de facturación, registro y login | pendiente |
-| `cp4-price-history` | `004_price_history` | Un histórico que la base de datos rellena sola con un trigger en el `UPDATE` | pendiente |
+| `chkp1-catalog` | `001_products` | Una tabla bien hecha, un endpoint paginado, un listado que carga más al hacer scroll | hecho |
 
-Para ver el código de un checkpoint concreto: `git checkout cp1-catalog` (y `git checkout main` para volver).
+Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
 ## Moverse entre checkpoints con Alembic
 
