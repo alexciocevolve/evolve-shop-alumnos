@@ -44,6 +44,7 @@ cd frontend && npm install && npm run dev
 | Tag | Revisión Alembic | Qué se enseña | Estado |
 |---|---|---|---|
 | `chkp1-catalog` | `001_products` | Una tabla bien hecha, un endpoint paginado, un listado que carga más al hacer scroll | hecho |
+| `chkp2-frontend` | `001_products` | Una frontend básico para ver todos los productos del catálogo para cada categoria | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
