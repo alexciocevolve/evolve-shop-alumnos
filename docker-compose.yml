@@ -1,7 +1,8 @@
-# La tienda. Tres servicios, y ninguno de ellos es Elasticsearch.
+# La tienda. Cuatro servicios, y ninguno de ellos es Elasticsearch.
 #
 #   db         la base de datos
 #   backend    la API. En un contenedor porque un colector lee el stdout de un CONTENEDOR
+#   frontend   la web, con el servidor de desarrollo de Vite, en http://localhost:5173
 #   filebeat   recoge ese stdout y lo manda a un Elasticsearch QUE NO ES NUESTRO
 #
 # ELASTICSEARCH Y KIBANA VIVEN APARTE, en el conjunto `elastic-real` de la sesión 24. Eso
@@ -44,11 +45,36 @@ services:
       # que un mismo Elasticsearch puede tener desarrollo y producción sin mezclarlos.
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Qué páginas pueden llamar a la API. Sale de .env (o del terminal); si no está, el
+      # servidor de Vite de este mismo compose.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s # la migración corre antes de que arranque el servidor
     ports:
       - "127.0.0.1:8000:8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    ports:
+      # La API solo admite este origen (CORS_ORIGINS). Si cambias el puerto, cambia también
+      # esa variable, o el navegador bloqueará todas las llamadas.
+      - "127.0.0.1:5173:5173"
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:9.5.3
