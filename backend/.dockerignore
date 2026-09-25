@@ -1,0 +1,26 @@
+# What does NOT go into the image. As important as the Dockerfile: everything copied ends
+# up inside, and an image is a file that gets distributed.
+#
+# The comments are on their OWN LINES on purpose. .dockerignore does not support a comment
+# at the end of a pattern line: write `.env  # secrets` and the pattern becomes ".env"
+# followed by spaces and the whole comment, which matches no file at all - so the one line
+# that exists to keep secrets out would be the only one doing nothing, silently.
+
+.git
+.gitignore
+
+# The most important line here. Secrets never travel inside an image.
+.env
+
+# Virtual environments belong to the machine that made them: they hold binaries compiled
+# for that operating system, and a Linux image cannot run the ones from Windows.
+.venv
+backend
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Logs written while developing. The container writes its own, to stdout.
+logs/
+*.log
