@@ -2,31 +2,17 @@
 
 A log line is read by more people than the database, and it is copied to more places, so
 it deserves tests like any other output of the program. These tests run the services and
-read what they logged, turned into the same JSON that ends up in Elasticsearch.
+read what they logged, turned into the same JSON that ends up in Elasticsearch (the
+`shop_logs` fixture in conftest.py). The lines written by the routes are checked through
+the API in test_api_logs.py.
 """
 
 import json
-import logging
-
-import pytest
 
 from app import services
-from app.observability import EcsFormatter, fingerprint
+from app.observability import fingerprint
 
 PASSWORD = "a-long-test-passphrase"
-
-
-@pytest.fixture
-def shop_logs(caplog):
-    """The lines the shop logged during the test, as the JSON Filebeat would ship."""
-    caplog.set_level(logging.INFO, logger="shop")
-    formatter = EcsFormatter()
-
-    def lines(action: str | None = None) -> list[dict]:
-        found = [json.loads(formatter.format(r)) for r in caplog.records if r.name == "shop"]
-        return [line for line in found if action is None or line.get("event.action") == action]
-
-    return lines
 
 
 def test_a_fingerprint_is_short_always_the_same_and_does_not_contain_the_secret():

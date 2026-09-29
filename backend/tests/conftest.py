@@ -12,6 +12,8 @@ Two decisions worth reading before the tests themselves:
    from the same 36 products and no users. See the `db` fixture for the one subtlety.
 """
 
+import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -31,12 +33,17 @@ os.environ["DATABASE_URL"] = TEST_URL
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app import services  # noqa: E402
+from app.db import get_db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.observability import EcsFormatter  # noqa: E402
 from app.schemas import AddressIn  # noqa: E402
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PASSWORD = "a-long-test-passphrase"
 
 
 @pytest.fixture(scope="session")
@@ -103,8 +110,56 @@ def count_queries(db):
 
 
 @pytest.fixture
+def client(db):
+    """The whole application, driven over HTTP, but writing to the test's transaction.
+
+    Overriding get_db is what joins the two: without it the app would open its own
+    connection, its commits would be real, and one test's orders would turn up in the next.
+    Everything else - the routes, the dependencies, the validation, the status codes - is
+    the real thing.
+    """
+
+    def use_the_test_session():
+        yield db
+
+    app.dependency_overrides[get_db] = use_the_test_session
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def shop_logs(caplog):
+    """The lines the shop logged during the test, as the JSON Filebeat would ship.
+
+    shop_logs() gives every line; shop_logs("order.create") only those of one event.action.
+    """
+    caplog.set_level(logging.INFO, logger="shop")
+    formatter = EcsFormatter()
+
+    def lines(action: str | None = None) -> list[dict]:
+        found = [json.loads(formatter.format(r)) for r in caplog.records if r.name == "shop"]
+        return [line for line in found if action is None or line.get("event.action") == action]
+
+    return lines
+
+
+@pytest.fixture
+def auth(db, user):
+    """The header a signed-in browser sends."""
+    session = services.login(db, user.email, PASSWORD)
+    return {"Authorization": f"Bearer {session.token}"}
+
+
+@pytest.fixture
+def other_auth(db, other_user):
+    session = services.login(db, other_user.email, "another-test-passphrase")
+    return {"Authorization": f"Bearer {session.token}"}
+
+
+@pytest.fixture
 def user(db):
-    return services.register_user(db, "ana@example.com", "a-long-test-passphrase", "Ana Torres")
+    return services.register_user(db, "ana@example.com", PASSWORD, "Ana Torres")
 
 
 @pytest.fixture

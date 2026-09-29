@@ -109,6 +109,11 @@ revisa que `DATABASE_URL` en `.env` diga `127.0.0.1` y no `localhost` (ver `.env
 | Hacer que `save_address` modifique la fila en `services.py` | Los tests del histórico de direcciones |
 | Añadir el `email` al log de login fallido en `services.py` | Los tests de `test_logs.py` que buscan datos personales |
 | Quitar `disable_existing_loggers=False` en `alembic/env.py` | Todos los tests de `test_logs.py`, porque la tienda se queda muda |
+| Quitar `with_for_update()` de `create_order` | El test de concurrencia: *«both buyers got through»* |
+| Devolver `403` en vez de `404` en un pedido ajeno | El test que comprueba que no se confirma su existencia |
+| Añadir `password_hash` a la respuesta de un usuario | Los dos tests que revisan lo que sale por la API |
+| Cambiar un modelo sin escribir la migración | El test de deriva, que es el único que dice **por qué** |
+| Escribir `x_cart_token` en el log de `cart.miss` | El test de `test_api_logs.py` que busca el token del carrito |
 
 Un test que no falla al romper lo que vigila no vigila nada.
 
@@ -124,10 +129,35 @@ existen**. A partir de ahí la tienda no escribía ni una línea, y ningún erro
 se nota, porque la migración corre en otro proceso antes de arrancar el servidor. Lo arregla
 `disable_existing_loggers=False`.
 
-> **Lo que todavía no está cubierto:** quitar `with_for_update()` de `create_order` **no** hace fallar
-> ningún test. Esa regla (dos compradores a por la última unidad) necesita dos transacciones reales
-> confirmadas, y eso no cabe en el truco de la transacción que se deshace. Está pendiente, junto con los
-> tests de las rutas HTTP (y de los logs que escriben ellas), los de migraciones y los del frontend.
+### Los tipos de test, y por qué son distintos
+
+| Fichero | Cómo se aísla |
+|---|---|
+| `test_security.py` | No toca la base de datos: una función, un argumento, una respuesta |
+| `test_*.py` (servicios), `test_api_*.py` y los dos de logs | Una transacción que se deshace al terminar |
+| `test_concurrency.py` | **Confirma de verdad**, porque dos transacciones que no se ven no compiten por nada. Crea su propio producto en vez de tocar el stock de los 36 de siempre, y limpia con SQL a pelo para que un fallo no deje filas confirmadas detrás |
+| `test_migrations.py` | **Su propia base de datos**, que crea y destruye, porque la vacía entera |
+
+Los de la API van contra el `TestClient` de FastAPI, no contra un servidor levantado: prueban las rutas,
+las dependencias, la validación y los códigos de estado, sin que nadie tenga que arrancar nada.
+
+[`tests/test_api_logs.py`](backend/tests/test_api_logs.py) hace con las rutas lo mismo que
+`test_logs.py` con los servicios, pero con los secretos llegando como llegan de verdad: en cabeceras y
+en el cuerpo de la petición, que es justo por donde se cuelan en un log sin querer. Comprueba el token
+del carrito, el de sesión, la contraseña, el correo y cada campo de una dirección.
+
+Y también encontró un fallo. El `trace.id` se leía de la `ContextVar` **al formatear** la línea, no al
+crearla. Por la consola funcionaba, porque allí se formatea en el acto, todavía dentro de la petición.
+Pero cualquier cosa que formatee más tarde (los tests, o una cola que escribe en segundo plano) llegaba
+cuando la petición ya había terminado y el id se perdía. Ahora el id se copia en la línea en el momento
+de crearla (`_record_with_request_id` en `observability.py`).
+
+Por último, `pytest.ini` convierte cualquier aviso en error. Eso destapó que `@app.on_event("startup")`
+está deprecado en FastAPI: el mensaje `shop started` ahora sale de `lifespan`, que además escribe
+`shop stopped` al parar. Dos `shop started` seguidos sin un `shop stopped` en medio significan que el
+servidor no se paró: se cayó o lo mataron.
+
+> **Lo que todavía no está cubierto:** los tests del frontend (`vitest`), que son el último trozo del cp4.
 
 ## Checkpoints
 
@@ -145,6 +175,7 @@ se nota, porque la migración corre en otro proceso antes de arrancar el servido
 | `chkp10-show-address` | `003b_address_history` | El pedido recuerda a qué dirección se envió, porque las direcciones ya no se editan | hecho |
 | `chkp11-show-orders` | `003c_orders_user` | Sin sesión no se compra, cada pedido tiene dueño y solo él lo ve | hecho |
 | `chkp12-backend-unittest` | ninguna | Tests de los servicios contra una base de datos de pruebas, y tests de lo que los logs no pueden contar | hecho |
+| `chkp13-backend-integration` | ninguna | Tests de la API, de la carrera por la última unidad, de las migraciones y de los logs que escriben las rutas | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -490,6 +521,7 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `product.view` | info | `GET /products/{id}` y `POST /products/{id}/views` | `shop.view_source` (`api` o `modal`), `shop.product_id`, `shop.product_name`, `shop.category`, `shop.price_cents`, `shop.stock` |
 | `product.miss` | warning | `GET /products/{id}` que no existe | `shop.product_id` |
 | `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
+| `startup` / `shutdown` | info | El servidor arranca / se para limpiamente | — |
 | `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |
 | `cart.create` | info | `POST /cart` | `shop.cart_ref` y el resumen del carrito |
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |

@@ -45,6 +45,22 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 # happened while serving one person's click, in order.
 current_request_id: ContextVar[str] = ContextVar("current_request_id", default="")
 
+# The id is copied onto every log record at the moment the record is CREATED, while the
+# request is still being served. The formatter reads it from the record, never from the
+# ContextVar: a handler may format a record later, somewhere the request no longer exists
+# (a queue that writes in the background, or the test harness), and by then the ContextVar
+# would say nothing. The tests found this: the id was always missing from what they read.
+_default_record_factory = logging.getLogRecordFactory()
+
+
+def _record_with_request_id(*args, **kwargs) -> logging.LogRecord:
+    record = _default_record_factory(*args, **kwargs)
+    record._request_id = current_request_id.get()
+    return record
+
+
+logging.setLogRecordFactory(_record_with_request_id)
+
 
 class EcsFormatter(logging.Formatter):
     """Turns a log record into one line of JSON using Elastic Common Schema names."""
@@ -66,7 +82,7 @@ class EcsFormatter(logging.Formatter):
             "service.environment": ENVIRONMENT,
         }
 
-        request_id = current_request_id.get()
+        request_id = getattr(record, "_request_id", "")
         if request_id:
             event["trace.id"] = request_id
 
