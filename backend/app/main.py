@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ORIGINS, IMAGES_DIR
 from app.observability import configure_logging, log, log_requests
-from app.routes import cart, categories, orders, products
+from app.routes import cart, categories, orders, products, users
 
 # Before anything else builds a logger of its own. Calling it later would leave whatever
 # logged during import writing in a different format, and those are the lines that explain
@@ -45,6 +45,7 @@ app.include_router(cart.router)
 app.include_router(categories.router)
 app.include_router(orders.router)
 app.include_router(products.router)
+app.include_router(users.router)
 
 # Static files: GET /images/product-1.svg returns that file from IMAGES_DIR. No route
 # function, no database: the server just reads the file and sends it (with ETag and

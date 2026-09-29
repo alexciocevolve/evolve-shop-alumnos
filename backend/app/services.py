@@ -1,11 +1,15 @@
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import PLACEHOLDER_CUSTOMER_EMAIL
-from app.models import Cart, CartItem, Category, Order, OrderItem, Product
+from app.models import Cart, CartItem, Category, Order, OrderItem, Product, User, UserSession
+from app.observability import fingerprint, log
+from app.security import DUMMY_HASH, hash_password, verify_password
 
 
 def list_categories(db: Session) -> list[Category]:
@@ -171,3 +175,97 @@ def get_order(db: Session, order_id: int) -> Order | None:
         .where(Order.id == order_id)
         .options(selectinload(Order.items).joinedload(OrderItem.product))
     ).first()
+
+
+# How long a sign-in lasts. Short enough that a token copied from a shared computer stops
+# working by itself; long enough not to interrupt someone in the middle of buying.
+SESSION_LIFETIME = timedelta(hours=24)
+
+
+def register_user(db: Session, email: str, password: str, full_name: str) -> User | None:
+    # The password is turned into a hash here and the plain one is never kept, not in a
+    # variable that outlives this call, not in a column, and never written to a log.
+    user = User(email=email, password_hash=hash_password(password), full_name=full_name)
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Asked for, not checked first. A "is this email free?" query followed by an
+        # INSERT has a gap in between, and two people registering at the same instant
+        # both pass it. The unique constraint is the only answer that cannot be raced.
+        db.rollback()
+        return None  # the email is taken; the route turns this into a 409
+    return user
+
+
+def login(db: Session, email: str, password: str) -> UserSession | None:
+    user = db.scalars(select(User).where(User.email == email)).first()
+
+    # The hashing work is done even when there is no such user, against a throwaway hash.
+    # Otherwise "this email is not registered" comes back noticeably faster than "wrong
+    # password", and that difference alone tells a stranger who shops here.
+    password_matches = verify_password(password, user.password_hash if user else DUMMY_HASH)
+    if user is None or not password_matches:
+        # The customer is told nothing about why (see the route), but the log is for us
+        # and the reason is exactly what we need. This is the only place that knows it,
+        # which is why this log lives in the service and not in the route like the others.
+        #
+        #   · unknown_email over and over, each time a different address: somebody is
+        #     trying a list of emails and passwords stolen from another site.
+        #   · wrong_password over and over on the same user.id: somebody is guessing the
+        #     password of one particular account.
+        #
+        # The password is never logged, not even the wrong one: it is often the right
+        # password for another site, or the right one with a typo.
+        # The email is not logged either. For a known user, user.id says who it is; for an
+        # unknown one, its fingerprint is enough to see the same address coming back.
+        log.warning(
+            "sign-in failed",
+            extra={
+                "event.action": "user.login",
+                "event.outcome": "failure",
+                "event.reason": "unknown_email" if user is None else "wrong_password",
+                **({"user.id": user.id} if user else {"shop.email_ref": fingerprint(email.lower())}),
+            },
+        )
+        return None  # one None for both reasons: the route must not say which it was
+
+    session = UserSession(
+        token=secrets.token_urlsafe(32),  # same idea as the cart token: long and random
+        user_id=user.id,
+        expires_at=datetime.now(timezone.utc) + SESSION_LIFETIME,
+    )
+    db.add(session)
+    db.commit()
+    # user.id is an ECS field: when a name already exists in ECS, it is used instead of
+    # inventing one under shop. The session token, like the cart token, is only fingerprinted.
+    log.info(
+        f"user {user.id} signed in",
+        extra={
+            "event.action": "user.login",
+            "event.outcome": "success",
+            "user.id": user.id,
+            "shop.session_ref": fingerprint(session.token),
+        },
+    )
+    return session
+
+
+def get_user_by_session(db: Session, token: str) -> User | None:
+    session = db.scalars(
+        select(UserSession)
+        .where(UserSession.token == token)
+        .options(joinedload(UserSession.user))
+    ).first()
+    # Expiry is checked here and not only when the row is created: the row sitting in the
+    # table is not what makes a session valid, the date is.
+    if session is None or session.expires_at <= datetime.now(timezone.utc):
+        return None
+    return session.user
+
+
+def logout(db: Session, token: str) -> None:
+    # The row is deleted, so the token stops working everywhere at once. Forgetting it in
+    # the browser alone would leave it usable by anyone who had already copied it.
+    db.execute(delete(UserSession).where(UserSession.token == token))
+    db.commit()

@@ -4,14 +4,17 @@ const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 export type ApiError = { status: number; detail: string };
 
 export const CART_TOKEN_KEY = "cart_token";
+export const AUTH_TOKEN_KEY = "auth_token";
 
 // Every call to the API goes through here, so errors look the same everywhere.
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  // The cart token is attached here, once, instead of at every call that needs it.
-  const token = localStorage.getItem(CART_TOKEN_KEY);
+  // Both tokens are attached here, once, instead of at every call that needs them.
+  const cartToken = localStorage.getItem(CART_TOKEN_KEY);
+  const authToken = localStorage.getItem(AUTH_TOKEN_KEY);
   const headers: Record<string, string> = {
     ...(options?.body ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { "X-Cart-Token": token } : {}),
+    ...(cartToken ? { "X-Cart-Token": cartToken } : {}),
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
   };
 
   let response: Response;
@@ -20,6 +23,11 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   } catch {
     throw { status: 0, detail: "Could not reach the server" } satisfies ApiError;
   }
+  // A token we sent and the server rejected is dead: it expired, or somebody signed out
+  // somewhere else. Drop it here so the next call does not keep presenting it.
+  if (response.status === 401 && authToken) localStorage.removeItem(AUTH_TOKEN_KEY);
+  // 204 means "done, nothing to say", and asking it for JSON would throw.
+  if (response.status === 204) return undefined as T;
   if (!response.ok) {
     // The API always answers errors as {"detail": "..."}
     const body = await response.json().catch(() => null);
@@ -110,3 +118,23 @@ export const removeCartItem = (productId: number) =>
 export const createOrder = () => request<Order>("/orders", { method: "POST" });
 
 export const getOrder = (id: number) => request<Order>(`/orders/${id}`);
+
+export type User = { id: number; email: string; full_name: string; created_at: string };
+
+// The password travels in the body of a POST, never in the address: a URL ends up in the
+// browser history, in the server log and in the Referer header sent to the next site.
+export const registerUser = (email: string, password: string, fullName: string) =>
+  request<User>("/users", {
+    method: "POST",
+    body: JSON.stringify({ email, password, full_name: fullName }),
+  });
+
+export const signIn = (email: string, password: string) =>
+  request<{ token: string }>("/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+export const getMe = () => request<User>("/me");
+
+export const signOut = () => request<void>("/logout", { method: "POST" });

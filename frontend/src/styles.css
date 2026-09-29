@@ -378,7 +378,7 @@ th {
   text-decoration: none;
 }
 
-.site-header > a {
+.site-nav > a {
   padding: 14px 20px;
   font-weight: 500;
   line-height: 1;
@@ -389,7 +389,7 @@ th {
   transition: background-color 0.2s ease-in-out;
 }
 
-.site-header > a:hover {
+.site-nav > a:hover {
   background: #333;
 }
 
@@ -507,4 +507,223 @@ tfoot td {
 
 .checkout .status {
   padding: 0;
+}
+
+/* Header navigation and the account dropdown, like the menu on evolve.es */
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.account {
+  position: relative;
+}
+
+.account-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-weight: 500;
+  line-height: 1;
+  padding: 14px 16px;
+  color: var(--dark);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.account-button:hover,
+.account-button[aria-expanded="true"] {
+  background: var(--light-gray);
+}
+
+.account-button:focus-visible {
+  outline: 2px solid var(--dark);
+  outline-offset: 2px;
+}
+
+.caret {
+  font-size: 0.7rem;
+}
+
+.account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 10;
+  min-width: 240px;
+  padding: 12px 8px;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2);
+}
+
+.account-menu button {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--dark);
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.account-menu button:hover {
+  color: #565656;
+  background: var(--light-gray);
+}
+
+.account-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 4px 10px 10px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.account-who strong {
+  color: var(--dark);
+  font-weight: 500;
+}
+
+/* Sign in / create account */
+.auth {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.tabs .chip[aria-selected="true"] {
+  color: #fff;
+  background: var(--dark);
+}
+
+.auth form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 28px;
+  background: #fff;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+}
+
+.auth h2 {
+  margin: 0 0 12px;
+  font-family: var(--heading-font);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-weight: 500;
+}
+
+.field input {
+  font: inherit;
+  padding: 12px 14px;
+  color: inherit;
+  background: var(--light-gray);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.field input:focus-visible {
+  outline: none;
+  border-color: var(--dark);
+  background: #fff;
+}
+
+/* The reveal button sits inside the box, so it reads as part of the field */
+.password-input {
+  display: flex;
+  align-items: stretch;
+  background: var(--light-gray);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.password-input:focus-within {
+  border-color: var(--dark);
+  background: #fff;
+}
+
+.password-input input {
+  flex: 1;
+  border: 0;
+  background: none;
+  /* A password is not proportional text: a fixed pitch makes it much easier to check
+     what was typed while it is showing. */
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+
+.password-input input:focus-visible {
+  outline: none;
+  border: 0;
+  background: none;
+}
+
+.reveal {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0 14px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.reveal:hover,
+.reveal[aria-pressed="true"] {
+  color: var(--dark);
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Always in the layout, empty when there is nothing to say, so the form does not jump */
+.field-warning {
+  min-height: 1.2rem;
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #b54708;
+}
+
+.auth .status.error {
+  padding: 8px 0 0;
+}
+
+.auth .primary {
+  align-self: stretch;
+  justify-content: center;
+  margin-top: 12px;
+  text-align: center;
 }

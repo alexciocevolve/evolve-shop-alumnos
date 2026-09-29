@@ -95,6 +95,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp4-separate-category` | `001c_categories_expand` y `001d_categories_contract` | Las categorías en su propia tabla, en dos migraciones (EXPAND-CONTRACT), y cada una con su log | hecho |
 | `chkp5-modal-description` | `001d_categories_contract` | El detalle del producto en un `<dialog>` sin pedir nada al servidor, y el navegador avisando de que se ha abierto | hecho |
 | `chkp6-cart` | `002_cart_and_orders` | Carrito (mutable, efímero) frente a pedido (inmutable, precio congelado), y un log por cada paso de la compra | hecho |
+| `chkp7-user` | `003_users` | Registro, acceso y sesiones, y qué se puede escribir en un log cuando hay contraseñas y tokens por medio | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -210,6 +211,46 @@ docker compose exec db psql -U shop -d shop
 > no lleva cuerpo: los precios, el total y el comprador los decide el servidor. El registro, la
 > autenticación y la asignación real del pedido llegan en el checkpoint siguiente.
 
+### cp3 · Registro y acceso
+
+1. Abrir [`models.py`](backend/app/models.py) y buscar dónde se guarda la contraseña. **No está.** Hay una
+   columna `password_hash` y ningún sitio donde quepa una contraseña: eso no es un olvido, es el diseño.
+2. Registrarse en la pantalla y mirar después la tabla en psql. Lo que hay es `scrypt$<sal>$<hash>`:
+
+   ```bash
+   docker compose exec db psql -U shop -d shop -c "SELECT email, left(password_hash, 30) FROM users"
+   ```
+
+   Registrar a dos personas **con la misma contraseña** y comparar: los hashes son distintos, porque cada
+   uno lleva su propia sal. Por eso una tabla de hashes precalculados no sirve de nada.
+3. Equivocarse de contraseña, y luego probar con un email que no existe. **El mensaje es el mismo**:
+   *"Invalid email or password"*. Si dijera "ese email no está registrado", el formulario de acceso sería
+   una forma de averiguar quién compra aquí. Y tardan lo mismo, porque el servidor hace el trabajo de
+   comprobar el hash también cuando no hay usuario.
+4. Ahora los mismos dos intentos en Kibana, con `event.action: user.login`. Aquí **sí** se distingue el
+   motivo, en `event.reason`: `wrong_password` o `unknown_email`. El cliente no debe saberlo, pero quien
+   vigila la tienda lo necesita: muchos `unknown_email` con direcciones distintas son alguien probando
+   una lista de cuentas robadas en otra web; muchos `wrong_password` sobre el mismo `user.id` son alguien
+   intentando adivinar la contraseña de una persona. Buscar la contraseña que se tecleó en los logs: no
+   está, ni la buena ni la mala. El correo tampoco.
+5. La contraseña en el navegador, con las herramientas de desarrollo abiertas:
+   - `type="password"`, y el botón **Show** para verla cuando hace falta.
+   - Si el campo estuviera controlado por React, la contraseña acabaría en el atributo `value` del HTML, y
+     cualquier cosa que serialice el DOM se la llevaría en claro. Por eso el campo es **no controlado** y se
+     lee del elemento al enviar. Se puede comprobar en la consola: `$0.getAttribute('value')` da `null`.
+   - `autocomplete="username"` y `autocomplete="current-password"` / `"new-password"`: es lo que hace que un
+     gestor de contraseñas guarde y rellene bien, y que el navegador no meta la contraseña vieja en el campo
+     de la nueva.
+   - Aviso de **Caps Lock**, que es la causa más común de que una contraseña correcta sea rechazada.
+6. Cerrar sesión y mirar la tabla `sessions`: la fila **se ha borrado**. Olvidar el token solo en el
+   navegador dejaría al token vivo 24 horas para quien lo hubiera copiado. En los logs, `user.login` y
+   `user.logout` llevan el mismo `shop.session_ref`, así que se puede saber cuánto duró la visita.
+7. Una sesión caducada: la fila sigue existiendo y aun así el token ya no vale, porque lo que manda es la
+   fecha, no la existencia de la fila.
+
+> **Todavía no hay direcciones ni pedidos asignados.** Este paso es solo la cuenta: registro, acceso y
+> sesión. Los pedidos siguen yendo al cliente de prueba de cp2.
+
 ## Fuera de alcance
 
 Se dejan fuera a propósito (no se implementan):
@@ -299,6 +340,10 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
 | `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `error.message` si falla |
 | `order.miss` | warning | `GET /orders/{id}` que no existe | `shop.order_id` |
+| `user.register` | info / warning | `POST /users`, hecho o con el correo ya registrado | `user.id` si sale bien, `event.reason: email_taken` si no |
+| `user.login` | info / warning | `POST /login`, dentro o fuera | `user.id` y `shop.session_ref` si entra; `event.reason` (`wrong_password` o `unknown_email`) y `user.id` o `shop.email_ref` si no |
+| `user.session` | info | Un token de sesión caducado o inventado (`401`) | `shop.session_ref` |
+| `user.logout` | info | `POST /logout` | `shop.session_ref` |
 
 El resumen del carrito son `shop.cart_ref`, `shop.cart_lines`, `shop.cart_units` y
 `shop.cart_total_cents`. Van en cada línea para que cualquiera se entienda sola, sin tener que
@@ -314,6 +359,11 @@ Dos cosas de estas líneas que se repiten en el resto del curso:
   su hash (`fingerprint()` en `observability.py`). El mismo token da siempre la misma huella, así que
   se puede seguir un carrito de principio a fin, pero con la huella no se puede abrir. El correo del
   cliente tampoco se escribe: es un dato personal y con el número de pedido basta.
+- **Contraseñas y sesiones.** La contraseña no se escribe nunca, tampoco la que está mal: muchas
+  veces es la buena de otra web, o la buena con una errata. El token de sesión va como huella
+  (`shop.session_ref`), igual que el del carrito. Para decir quién es el usuario se usa `user.id`, que
+  es el nombre que ECS ya tiene para eso: cuando ECS tiene un campo, se usa el suyo en vez de
+  inventar uno bajo `shop.`.
 
 El servidor solo puede apuntar lo que le llega. Abrir el detalle de un producto no le pide nada
 (los datos ya estaban en la página), así que, por sí solo, el backend nunca sabría que ha pasado.

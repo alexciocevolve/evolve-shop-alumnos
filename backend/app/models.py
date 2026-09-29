@@ -107,3 +107,30 @@ class OrderItem(Base):
     price_cents: Mapped[int]
     order: Mapped["Order"] = relationship(back_populates="items")
     product: Mapped["Product"] = relationship()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    # unique: the email IS the login name, so the database itself refuses a second one.
+    email: Mapped[str] = mapped_column(String(200), unique=True)
+    # Never the password: only a value derived from it, which cannot be turned back.
+    password_hash: Mapped[str] = mapped_column(Text)
+    full_name: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserSession(Base):
+    # Named UserSession and not Session because sqlalchemy.orm.Session already exists,
+    # and two things called Session in the same file is a bug waiting to happen.
+    __tablename__ = "sessions"
+
+    # Same idea as carts: a long random token identifies the session, and it is the key.
+    token: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_sessions_user_id"), index=True
+    )
+    # A session that lasts forever is a password that never expires.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    user: Mapped["User"] = relationship()

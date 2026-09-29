@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useCart } from "../cart";
+import AccountMenu from "./AccountMenu";
 
 export default function Header() {
   const { itemCount } = useCart();
@@ -9,7 +10,10 @@ export default function Header() {
       <h1>
         <Link to="/">Evolve Shop</Link>
       </h1>
-      <Link to="/cart">Cart ({itemCount})</Link>
+      <nav className="site-nav">
+        <Link to="/cart">Cart ({itemCount})</Link>
+        <AccountMenu />
+      </nav>
     </header>
   );
 }
