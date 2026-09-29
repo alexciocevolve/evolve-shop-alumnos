@@ -196,8 +196,65 @@ contaría doble en Kibana.
 > hay más. El doble también respeta `disconnect()`, como el de verdad; sin eso, el test con StrictMode
 > cargaba la misma página dos veces y enseñaba cada producto repetido.
 
-> **Lo que todavía no está:** tests de extremo a extremo. Los de aquí prueban el frontend contra una API
-> simulada y el backend contra una base de datos de verdad, pero nada recorre la tienda entera de una vez.
+### De extremo a extremo
+
+Con la tienda levantada, desde `e2e/`:
+
+```bash
+docker compose up -d
+```
+
+```bash
+cd e2e && ../backend/.venv/Scripts/python -m pytest
+```
+
+Si la tienda no está arrancada, se saltan con un mensaje que lo dice, en vez de fallar quince veces.
+
+Son **17 y hablan solo HTTP y SQL**: no hay navegador. La regla que los define está en
+[`e2e/conftest.py`](e2e/conftest.py) y conviene leerla antes que los tests:
+
+> **Ninguno importa la aplicación.** Ni un solo `from app import ...`.
+
+Un test que importa el código que prueba puede pasar mientras los contenedores están mal conectados, las
+migraciones no se han ejecutado, el CORS apunta a otro sitio o las imágenes no se están sirviendo. Eso es
+justo lo que esta capa existe para cazar.
+
+**Prueba de que sirven:** con `CORS_ORIGINS` apuntando a una dirección equivocada, los 166 tests de backend
+y frontend pasan igual y **dos de estos fallan**. Con el contenedor del frontend parado, falla el que
+comprueba que se está sirviendo. La tienda estaría rota en cualquier navegador y nada más se habría enterado.
+
+**Escriben en la base de datos de verdad**, porque es la que usa la tienda en marcha. Por eso traen **su
+propio producto y su propio cliente** y se los llevan al terminar: los 36 productos de siempre no se tocan y
+el stock no queda cambiado.
+
+#### Los logs, hasta Elasticsearch
+
+[`e2e/test_logs_in_elastic.py`](e2e/test_logs_in_elastic.py) sigue a los logs hasta donde alguien los va a
+leer. Los tests de `backend/` comprueban lo que dice una línea; estos comprueban que **llega**: que sale del
+contenedor, que Filebeat la recoge y que Elasticsearch la guarda con sus campos. Esa parte del viaje no la
+ve nadie desde dentro de la tienda.
+
+- El primero manda una petición con una cabecera `X-Request-Id` inventada (el middleware respeta la que
+  trae el cliente) y la busca en `logs-shop-evolve`. Tienen que aparecer las dos líneas de esa petición, la
+  de HTTP y la de `categories.list`, y con números que siguen siendo números.
+- El segundo busca en **todos los campos de todas las líneas** el correo y la contraseña del cliente de
+  prueba, y la contraseña equivocada con la que se intenta entrar. No puede aparecer ninguno.
+
+Esperan hasta 60 segundos, porque Filebeat envía por lotes y una línea tarda unos segundos en llegar.
+Si Elasticsearch no está levantado, **se saltan** en vez de fallar: no es parte de la tienda, y que la
+tienda funcione con el sistema de logs caído es justo lo que se buscaba. Leen la clave de `ELASTIC_API_KEY`
+en `.env`.
+
+### Por qué tan pocos de cada capa
+
+| Capa | Cuántos | Qué prueba | Coste de un fallo |
+|---|---|---|---|
+| Backend | 139 | Las reglas: stock, precios, propiedad, migraciones, y lo que dicen los logs | Rápido y señala la línea |
+| Frontend | 27 | Los comportamientos que se rompen en silencio | Rápido |
+| Extremo a extremo | 17 | Que las piezas están conectadas, y que los logs llegan | Lento, y dice «algo falla» sin decir dónde |
+
+Cuanto más se sube en la tabla, más lentos y más vagos son los mensajes. Por eso arriba hay diecisiete y no
+doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**.
 
 ## Checkpoints
 
@@ -217,6 +274,7 @@ contaría doble en Kibana.
 | `chkp12-backend-unittest` | ninguna | Tests de los servicios contra una base de datos de pruebas, y tests de lo que los logs no pueden contar | hecho |
 | `chkp13-backend-integration` | ninguna | Tests de la API, de la carrera por la última unidad, de las migraciones y de los logs que escriben las rutas | hecho |
 | `chkp14-frontend-tests` | ninguna | Tests del frontend sin red, incluido el aviso de producto abierto | hecho |
+| `chkp15-e2e-test` | ninguna | Tests de extremo a extremo por HTTP contra la tienda en marcha, y que los logs llegan a Elasticsearch sin secretos | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
