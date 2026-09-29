@@ -299,38 +299,48 @@ main {
   font-weight: 600;
 }
 
-.price-history table {
+.price-chart {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-  /* Numbers line up by digit, so a column of prices can be compared by looking down it. */
+  height: auto;
+  overflow: visible;
+}
+
+/* The near-black of evolve.es, like every other thing that asks to be looked at */
+.price-chart-line {
+  fill: none;
+  stroke: var(--dark);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.price-chart-dot {
+  fill: var(--dark);
+}
+
+.price-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.price-chart-tick {
+  font-size: 9px;
+  fill: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-.price-history th,
-.price-history td {
-  padding: 6px 8px;
-  text-align: right;
-  border-bottom: 1px solid var(--border);
-}
-
-.price-history th:first-child,
-.price-history td:first-child {
-  text-align: left;
-}
-
-.price-history th {
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.price-history tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.price-before {
-  color: var(--muted);
-  text-decoration: line-through;
+/* Out of sight, still in the page and still read aloud. display:none or visibility:hidden
+   would take it out of the accessibility tree too, which is the opposite of the point. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .modal-close {

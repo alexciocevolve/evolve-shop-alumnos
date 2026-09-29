@@ -312,6 +312,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp17-price-history-trigger` | `004a_price_trigger` | Un trigger rellena el histórico, y deja su propia línea en el log de PostgreSQL | hecho |
 | `chkp18-price-history-api` | `004a_price_trigger` | `GET /products/{id}/price-history`: el histórico por HTTP, `404` si no hay producto y `[]` si nunca cambió | hecho |
 | `chkp19-price-history-table-ui` | `004a_price_trigger` | El histórico en el modal, pedido solo al abrirlo; el contrato OpenAPI en el repositorio, y por qué en desarrollo algunos logs salen dobles | hecho |
+| `chkp20-price-history-ui` | `004a_price_trigger` | El histórico dibujado como gráfica, con el eje recortado a la vista. Mismos datos, mismo log (`product.price_history`) | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
