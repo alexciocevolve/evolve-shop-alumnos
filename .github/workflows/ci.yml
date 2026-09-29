@@ -1,0 +1,202 @@
+# Everything this project used to check by hand, checked on every push instead.
+#
+# The shape is the test pyramid of cp4 spent as money. The cheap layers run first and at
+# the same time; the expensive one - which builds three containers and waits for them to
+# report healthy - runs only if they were green. A red unit test should not cost three
+# minutes of Docker to find out about.
+#
+#     rules ┐
+#   frontend ├──→ e2e
+#    backend ┘
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch cancels the run already going. The only answer anybody
+# acts on is the one for the newest commit, and a queue of stale runs just hides it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The two house rules that used to be checked by hand before every tag, which is another
+  # way of saying they were checked until somebody forgot. Seconds to run.
+  #
+  # And a third check that belongs to the logs: the collector's configuration has to load.
+  # A filebeat.yml that does not load stops EVERY log at once, and nothing in the shop
+  # notices, because the shop keeps working. Here it costs seconds to find out.
+  rules:
+    name: House rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: No classes in the frontend
+        # grep exits 1 when it finds nothing, which is the outcome we want, so the test is
+        # inverted on purpose: finding something is the failure.
+        run: |
+          if grep -rn "class " frontend/src; then
+            echo "::error::frontend/src is written with functions and hooks, not classes."
+            exit 1
+          fi
+
+      - name: The code is in English, Spanish stays in the classroom notes
+        # Mixing two languages inside one file is the fastest way to stop knowing what
+        # anything is called. The documentation is Spanish; identifiers and comments are not.
+        run: |
+          if grep -rniE "producto|carrito|pedido|usuario|direccion|precio|sesion" \
+              backend/app backend/alembic/versions frontend/src; then
+            echo "::error::Spanish found in code. Spanish belongs in the README only."
+            exit 1
+          fi
+
+      - name: The log collector's configuration loads
+        # `filebeat test config` loads filebeat.yml exactly as the real container would and
+        # stops there, without connecting to anything. It catches a file that does not
+        # load (broken YAML, bad indentation), which is the mistake that silences every log.
+        # It does NOT catch everything: a misspelt input type still says "Config OK". The
+        # key and the host are placeholders because nothing here connects.
+        run: >-
+          docker run --rm
+          -e ELASTIC_API_KEY=ci:unused -e ELASTIC_HOST=unused
+          -v "$PWD/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro"
+          docker.elastic.co/beats/filebeat:9.5.3
+          test config --strict.perms=false
+
+  frontend:
+    name: Frontend (33 tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The same major the frontend image is built from, so CI cannot pass on a Node
+          # that production never runs.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ci and not install: it installs exactly what package-lock.json pins and fails if
+      # the lock file and package.json disagree, instead of quietly resolving something new.
+      - run: npm ci
+
+      - run: npm test
+
+      # `npm run build` is `tsc --noEmit && vite build`, so this is the type check as well.
+      # It belongs in CI because nothing else catches a type error: vitest transpiles
+      # without checking types, so a broken one can sit in a suite that is fully green.
+      - name: Type-check and build
+        run: npm run build
+
+  backend:
+    name: Backend (154 tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # A real PostgreSQL, not a stand-in and not SQLite. The suite runs the real migrations,
+    # creates databases of its own, and tests a partial unique index, SELECT ... FOR UPDATE
+    # and a plpgsql trigger. None of that means anything anywhere else.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: shop
+          POSTGRES_PASSWORD: shop
+          POSTGRES_DB: shop
+        # The same healthcheck as docker-compose.yml. Without it the first step would race
+        # the database: the container exists seconds before it accepts a connection.
+        options: >-
+          --health-cmd "pg_isready -U shop -d shop"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    env:
+      # conftest.py derives two more from this one: shop_test, which it builds by running
+      # the migrations, and the `postgres` database it connects to in order to create them.
+      DATABASE_URL: postgresql+psycopg://shop:shop@localhost:5432/shop
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # 3.12, the version in backend/Dockerfile. Development happens on a newer one, so
+          # this is also the check that nothing has started depending on it.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      # 154 tests: services, HTTP routes, the two-buyer race, every migration up and down
+      # again, the schema-drift check, the committed OpenAPI contract and what the logs
+      # are allowed to say.
+      - run: python -m pytest
+
+  e2e:
+    name: End to end (18 tests)
+    # The gate that makes the pyramid cost what it should. Everything below has to be green
+    # before the slow layer is even started.
+    needs: [rules, frontend, backend]
+    runs-on: ubuntu-latest
+
+    env:
+      # docker-compose.yml refuses to start without this one, on purpose: a database
+      # password should never have a default that works.
+      POSTGRES_PASSWORD: shop
+      # The e2e tests speak to the shop over HTTP and to the database over SQL, and they
+      # import nothing from the application. This is the SQL half.
+      DATABASE_URL: postgresql+psycopg://shop:shop@localhost:5432/shop
+      # Written into every log line as service.environment. Nothing ships these anywhere,
+      # but if anything ever did, a CI run could never be mistaken for development.
+      ENVIRONMENT: ci
+      # Elasticsearch is not part of this shop, and there is none here. docker-compose.yml
+      # still refuses to load without these two, so they get placeholders, and Filebeat is
+      # left out of the `up` below. Its configuration was already checked in `rules`, and
+      # the end-to-end tests that read Elasticsearch skip themselves when it is not there.
+      ELASTIC_API_KEY: ci:unused
+      ELASTIC_HOST: unused
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # --wait blocks until every healthcheck passes, which is what makes this honest: the
+      # tests start when the shop is actually assembled, not when three containers happen
+      # to exist. The three are named because the fourth, the log collector, has nowhere
+      # to send anything in CI.
+      - name: Start the shop
+        run: docker compose up -d --build --wait db backend frontend
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - run: pip install -r backend/requirements-dev.txt
+
+      # These are the only tests that can see a shop that is misconfigured rather than
+      # miswritten: migrations that never ran, CORS naming the wrong address, images that
+      # nobody mounted. With CORS pointed elsewhere the other 187 stay green and two of
+      # these fail.
+      - name: Run the end-to-end tests
+        working-directory: e2e
+        run: python -m pytest
+
+      # When something fails here it is almost never the test: it is a container that did
+      # not come up. Printing the logs turns "e2e failed" into an answer.
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200

@@ -85,6 +85,48 @@ tocar una línea de código.
 curl -s "http://localhost:8000/categories"
 ```
 
+## Integración continua
+
+`.github/workflows/ci.yml` ejecuta en cada push y en cada pull request **todo lo que antes se
+comprobaba a mano**: las tres suites de tests y las dos reglas de estilo del proyecto (ni clases
+en `frontend/src`, ni castellano en el código), que hasta ahora eran dos `grep` que había que
+acordarse de teclear antes de cada tag.
+
+Cuatro trabajos, y el orden no es casual: es la pirámide de tests gastada como dinero.
+
+```
+rules  ─┐
+frontend ├──→ e2e
+backend ─┘
+```
+
+Lo barato va primero y a la vez; **e2e solo arranca si lo demás estaba verde**, porque construye
+tres contenedores y espera a sus healthchecks. Un test unitario en rojo no debería costar tres
+minutos de Docker.
+
+Dos cosas que el pipeline sí comprueba y una sesión de desarrollo normal no:
+
+- **El tipado.** `npm run build` es `tsc --noEmit && vite build`. Vitest transpila **sin comprobar
+  tipos**, así que un error de tipos puede vivir tranquilamente dentro de una suite en verde.
+- **La versión de Python.** CI usa **3.12**, la del `Dockerfile`, no la del portátil. Es la
+  comprobación de que el proyecto no ha empezado a depender de una versión que producción no tiene.
+
+### Y los logs, en CI
+
+En GitHub no hay Elasticsearch, y no tiene por qué haberlo: no es parte de la tienda. Eso cambia tres
+cosas respecto a clase:
+
+- **Filebeat no se arranca.** El trabajo `e2e` levanta solo `db`, `backend` y `frontend`. El
+  `docker-compose.yml` exige `ELASTIC_API_KEY` y `ELASTIC_HOST` igualmente, así que se le dan valores de
+  relleno.
+- **Su configuración sí se comprueba**, en `rules`: `filebeat test config` carga `filebeat.yml` igual que
+  el contenedor de verdad y se para ahí. Un `filebeat.yml` que no carga deja la tienda **sin ningún log**
+  y la tienda sigue funcionando, así que nadie se entera. Ojo con lo que no caza: una indentación rota sí,
+  un tipo de input mal escrito no.
+- **Los tests de `e2e/test_logs_in_elastic.py` se saltan**, con un mensaje que dice por qué. Y el backend
+  corre con `ENVIRONMENT=ci`, así que cada línea lleva `service.environment: ci`: si algún día esos logs
+  acabaran en algún sitio, nunca se confundirían con los de desarrollo.
+
 ## El contrato de la API (`openapi.json`)
 
 FastAPI **genera** el documento OpenAPI a partir del código: recorre las rutas y lee las firmas, los
@@ -313,6 +355,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp18-price-history-api` | `004a_price_trigger` | `GET /products/{id}/price-history`: el histórico por HTTP, `404` si no hay producto y `[]` si nunca cambió | hecho |
 | `chkp19-price-history-table-ui` | `004a_price_trigger` | El histórico en el modal, pedido solo al abrirlo; el contrato OpenAPI en el repositorio, y por qué en desarrollo algunos logs salen dobles | hecho |
 | `chkp20-price-history-ui` | `004a_price_trigger` | El histórico dibujado como gráfica, con el eje recortado a la vista. Mismos datos, mismo log (`product.price_history`) | hecho |
+| `chkp21-deploy-pipeline` | `004a_price_trigger` | GitHub Actions ejecuta en cada push todo lo que se comprobaba a mano, incluida la configuración de Filebeat | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -585,7 +628,6 @@ Se dejan fuera a propósito (no se implementan):
 - Pasarela de pago (un pedido nace ya en estado `paid`)
 - Roles y permisos
 - Imágenes de producción (los contenedores de la aplicación arrancan los servidores de desarrollo)
-- CI (los tests se ejecutan a mano antes de cada tag)
 
 ## Observabilidad: los logs, en un Elasticsearch que no es nuestro
 
