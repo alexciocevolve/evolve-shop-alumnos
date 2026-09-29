@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app import payments
 from app.models import (
     Address,
     Cart,
@@ -21,7 +22,6 @@ from app.models import (
     UserSession,
 )
 from app.observability import fingerprint, log
-from app.payments import PaymentDeclined
 from app.schemas import AddressIn
 from app.security import DUMMY_HASH, hash_password, verify_password
 
@@ -152,25 +152,16 @@ def cart_total_cents(cart: Cart) -> int:
     return sum(item.product.price_cents * item.quantity for item in cart.items)
 
 
-def create_order(db: Session, cart: Cart, user: User, pay: Callable) -> Order:
-    # The whole checkout is ONE transaction: everything below happens, or nothing does.
+def create_order(db: Session, cart: Cart, user: User) -> Order:
+    # The whole thing is ONE transaction: everything below happens, or nothing does.
     #
-    # And from this phase on, one of the things that happens inside it is A CALL OVER THE
-    # INTERNET. That is new, and it is the uncomfortable part of the design, so it is
-    # written down rather than hidden:
+    # And no network call happens inside it any more, which is a real improvement that came
+    # for free. Objective 16 charged the card right here, holding SELECT ... FOR UPDATE on
+    # the products while Stripe thought about it - the shop's locks were hostage to somebody
+    # else's latency. Now creating the order and paying for it are two acts, so the
+    # transaction closes before anybody talks to Stripe.
     #
-    #   · The products above are locked with SELECT ... FOR UPDATE. While Stripe thinks,
-    #     nobody else can buy them. Stripe answering slowly becomes the shop being slow -
-    #     the concurrency test of cp4 explains why that matters.
-    #   · If the process dies between the charge and the commit, Stripe has the money and
-    #     this shop has no order. Nobody finds out until the customer complains.
-    #
-    # Moving the call outside the transaction does not fix it, it only swaps which half
-    # can be orphaned. A database transaction and a call to somebody else's server cannot
-    # be made atomic, and every phase after this one is a way of living with that.
-    #
-    # `pay` arrives as an argument instead of being imported so the tests can hand over a
-    # function that refuses, times out, or counts how many times it was called.
+    # What it costs: the order now exists WITHOUT BEING PAID. That is the whole objective.
     if not cart.items:
         raise ValueError("The cart is empty")
 
@@ -236,125 +227,114 @@ def create_order(db: Session, cart: Cart, user: User, pay: Callable) -> Order:
         products[item.product_id].stock -= item.quantity
 
     db.add(order)
-    # flush and not commit: this asks the database for the id without ending the
-    # transaction. The id is needed before charging, because the charge has to say which
-    # order it is paying for - and if the charge is refused, none of this ever existed.
-    db.flush()
+    db.delete(cart)  # the lines go with it, and the cart has served its purpose
+    db.commit()
+    return order
 
-    # Read now, while the order is still in the session: after a rollback these attributes
-    # are gone, and the log lines below need them most exactly then.
-    order_id, amount_cents = order.id, order.total_cents
-    # The payment lines say who and what, never how: no email, no card, no key. The card
-    # is not even ours to log (Stripe holds it), which is the point of using Stripe.
-    who = {"user.id": user.id, "shop.order_id": order_id, "shop.amount_cents": amount_cents}
 
+def start_checkout(db: Session, order: Order, gateway) -> str:
+    """Hand the order over to Stripe and return where to send the buyer.
+
+    Separate from create_order on purpose, and not just for tidiness: they are now two
+    different acts with a gap between them that the shop does not control. The order exists
+    at the end of the first one and nobody has paid; the second one only opens a door.
+
+    The lines go over as REAL line items, which the previous design could not do - a
+    PaymentIntent takes one number. So the product names and quantities appear on Stripe's
+    page and on the receipt, which is what a buyer needs to recognise what they are paying
+    for.
+    """
+    lines = [
+        {
+            "price_data": {
+                "currency": payments.CURRENCY,
+                "product_data": {"name": item.product.name},
+                # The price FROZEN on the order, not today's catalogue price. If somebody
+                # edits the product while this customer is typing their card, they still
+                # pay what they were shown.
+                "unit_amount": item.price_cents,
+            },
+            "quantity": item.quantity,
+        }
+        for item in order.items
+    ]
+    # The order is already committed, so if Stripe fails here the order stays behind,
+    # pending, with no way to pay for it. Read now, for the log lines below.
+    who = {"user.id": order.user_id, "shop.order_id": order.id, "shop.amount_cents": order.total_cents}
     started = time.perf_counter()
     try:
-        charge = _charge_for(pay, order, user, cart, products)
+        checkout = gateway.start(
+            order_id=order.id, lines=lines, customer_email=order.customer_email
+        )
     except Exception as e:
-        # How long Stripe took is how long these products stayed locked for everybody else,
-        # so it goes in every payment line, the failed ones included.
-        took_ms = round((time.perf_counter() - started) * 1000, 1)
-        if isinstance(e, PaymentDeclined):
-            # An ordinary no. The customer is told, nothing was charged, nothing to fix.
-            log.warning(
-                "payment declined",
-                extra={
-                    "event.action": "payment.charge",
-                    "event.outcome": "failure",
-                    "event.reason": "declined",
-                    "event.duration_ms": took_ms,
-                    "error.message": str(e),
-                    **who,
-                },
-            )
-        else:
-            # NOT a decline, and an error rather than a warning, because the outcome is
-            # UNKNOWN: Stripe may have charged the card and the answer got lost on the way
-            # back. Before anybody tells the customer "you were not charged", somebody has
-            # to look for shop.order_id in the Stripe dashboard.
-            log.error(
-                "payment failed, outcome unknown",
-                extra={
-                    "event.action": "payment.charge",
-                    "event.outcome": "unknown",
-                    "event.reason": "gateway_error",
-                    "event.duration_ms": took_ms,
-                    "error.type": type(e).__name__,
-                    "error.message": str(e),
-                    **who,
-                },
-            )
-        # The card was refused, or the gateway broke, or the network did. Either way the
-        # order has already been built and the stock already taken, so it all has to go.
-        #
-        # This rollback is written down rather than left to chance. get_db closes the
-        # session when the request ends and that WOULD undo the flush - but "somebody
-        # downstream will clean this up" is a bad thing to rely on for the one path where
-        # the shop has just taken stock off the shelf and failed to get paid for it. It
-        # also means the service behaves the same when it is called outside a request.
-        db.rollback()
-        raise
-    took_ms = round((time.perf_counter() - started) * 1000, 1)
-    order.payment_intent_id = charge.payment_intent_id
-
-    log.info(
-        f"payment for order {order_id} charged",
-        extra={
-            "event.action": "payment.charge",
-            "event.outcome": "success",
-            "event.duration_ms": took_ms,
-            # Stripe's name for the payment: what joins this line to their dashboard.
-            "shop.payment_intent_id": charge.payment_intent_id,
-            # The amount STRIPE says it charged, next to the one we asked for. Equal today;
-            # a dashboard that compares the two is how anybody would notice if they stopped
-            # being equal.
-            "shop.charged_cents": charge.amount_cents,
-            **who,
-        },
-    )
-
-    db.delete(cart)  # the lines go with it, and the cart has served its purpose
-    try:
-        db.commit()
-    except Exception:
-        # The worst line this shop can write: Stripe HAS the money and there is no order.
-        # The comment at the top of this function says it can happen, and this is what is
-        # left when it does. The log is then the only record that somebody paid, so it
-        # carries exactly what is needed to find the payment and refund it.
-        log.critical(
-            "charged, but the order was not saved",
+        log.error(
+            "checkout could not start",
             extra={
-                "event.action": "payment.orphaned",
+                "event.action": "checkout.start",
                 "event.outcome": "failure",
-                "shop.payment_intent_id": charge.payment_intent_id,
-                "shop.charged_cents": charge.amount_cents,
+                "event.duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "error.type": type(e).__name__,
+                "error.message": str(e),
                 **who,
             },
         )
         raise
-    return order
+    order.checkout_session_id = checkout.session_id
+    db.commit()
 
-
-def _charge_for(pay: Callable, order: Order, user: User, cart: Cart, products: dict):
-    """Build what the gateway is told about this order, and ask it to charge."""
-    lines = [f"{item.quantity} x {products[item.product_id].name}" for item in cart.items]
-    return pay(
-        amount_cents=order.total_cents,
-        # What the buyer reads on the receipt Stripe sends them.
-        description=f"Order #{order.id}: " + ", ".join(lines),
-        # What we read in the Stripe dashboard. Never shown to the buyer. Values are
-        # capped at 500 characters by Stripe, so a very long order is cut rather than
-        # rejected - the lines live in order_items anyway, this is only for looking things
-        # up by eye. order_id is the one that matters: it is what turns a payment in their
-        # dashboard back into an order in ours.
-        metadata={
-            "order_id": str(order.id),
-            "user_id": str(user.id),
-            "items": "; ".join(lines)[:500],
+    # Nothing has been charged yet: this is the door opening, not the money moving. What
+    # happens next is on Stripe's page, which this shop cannot see. That is why the line
+    # carries the session id: it is the thread that joins this order to whatever Stripe
+    # says later, and to the order.confirm line if the buyer ever comes back.
+    log.info(
+        f"checkout started for order {order.id}",
+        extra={
+            "event.action": "checkout.start",
+            "event.outcome": "success",
+            # Only creating the page, but it still happens while the buyer waits for it.
+            "event.duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            "shop.checkout_session_id": checkout.session_id,
+            "shop.checkout_lines": len(lines),
+            **who,
         },
-        receipt_email=order.customer_email,
     )
+    return checkout.url
+
+
+def confirm_order(db: Session, order: Order) -> Order:
+    """Mark the order paid because the browser came back saying so.
+
+    READ THIS BEFORE COPYING IT. It believes whoever calls it, and that is wrong in two
+    ways that the next objective demonstrates rather than argues:
+
+      · Anyone can call it. It checks nothing against Stripe, so a `curl` buys goods.
+      · It only runs if the buyer comes back. Close the tab after paying and the money is
+        gone and the order stays pending, with nobody to notice.
+
+    It is written this way deliberately, because it is what almost every first integration
+    does, and because Stripe itself warns against it in the same page that explains how:
+    "Activar la gestion logistica solo desde tu pagina de exito de Checkout no es fiable."
+    That sentence is worth reading AFTER having seen it break, not before.
+    """
+    previous_status = order.status
+    order.status = "paid"
+    db.commit()
+
+    # Logged with the one field that gives this function away. Every confirmation today
+    # says verified_with_stripe: false, because nothing asked Stripe; in Kibana that is a
+    # column that should never be false on a paid order, and here it always is.
+    log.info(
+        f"order {order.id} marked paid",
+        extra={
+            "event.action": "order.confirm",
+            "user.id": order.user_id,
+            "shop.order_id": order.id,
+            "shop.previous_status": previous_status,
+            "shop.checkout_session_id": order.checkout_session_id,
+            "shop.verified_with_stripe": False,
+        },
+    )
+    return order
 
 
 def list_orders(db: Session, user: User) -> list[Order]:

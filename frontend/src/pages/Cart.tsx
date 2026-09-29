@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useCart } from "../cart";
 import AddressLines from "../components/AddressLines";
 import { formatPrice } from "../format";
@@ -9,7 +9,6 @@ export default function Cart() {
   const { cart, setQuantity, removeItem, placeOrder } = useCart();
   const { user, shippingAddress } = useSession();
   const [placing, setPlacing] = useState(false);
-  const navigate = useNavigate();
 
   if (!cart || cart.items.length === 0) {
     return (
@@ -25,7 +24,12 @@ export default function Cart() {
     setPlacing(false);
     // On failure placeOrder returns null and leaves the reason in the banner above,
     // with the cart untouched so it can be fixed and tried again.
-    if (order) navigate(`/orders/${order.id}`);
+    //
+    // And on success the buyer LEAVES THE SHOP. Not navigate() - that is the router moving
+    // inside this application, and Stripe's page is not inside it. A whole page load, to
+    // somebody else's domain, and from here on the shop knows nothing about what happens
+    // until the browser decides to come back. That sentence is the entire objective.
+    if (order) window.location.href = order.checkout_url;
   }
 
   return (

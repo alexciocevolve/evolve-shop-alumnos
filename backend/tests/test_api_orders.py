@@ -55,12 +55,15 @@ def test_the_order_carries_the_buyer_and_the_address(client, auth, shipping_addr
     body = client.post("/orders", headers={**cart, **auth}).json()
 
     assert body["customer_email"] == user.email
-    # This line did not change in objective 16, and that is the whole point of it. Since
-    # the first commit of the shop it asserted "paid" on an order nobody had paid for -
-    # phase 0 found it pinning a lie. Now a card is charged before the transaction commits,
-    # so the word is finally true and the test never had to move. What changed is the
-    # meaning, not the code, which is the most honest kind of progress there is.
-    assert body["status"] == "paid"
+    # This one line has now told three different truths without moving much.
+    #   · Until objective 15 it asserted "paid" on an order nobody had paid for. Phase 0
+    #     found it pinning a lie.
+    #   · Objective 16 charged the card inside the same transaction, so "paid" became true
+    #     and the line did not change at all - only its meaning did.
+    #   · Objective 17 puts a payment screen in front of the buyer, and an order that is
+    #     waiting for somebody to type their card is not paid. So it says so.
+    # Worth walking through in class in that order: the same assertion, three shops.
+    assert body["status"] == "pending_payment"
     assert body["shipping_address"]["street"] == "Calle Mayor 1"
     assert body["shipping_address"]["kind"] == "shipping"
     # is_active is the customer's business and no concern of an order.
@@ -135,24 +138,39 @@ def test_the_whole_journey_from_an_empty_shop_to_a_confirmed_order(client, auth,
     assert [i["product_id"] for i in order["items"]] == [LAPTOP]
 
 
-def test_a_refused_card_answers_402_and_creates_nothing(client, auth, shipping_address, declining_pay):
-    """A decline is its own answer, not a generic "no"."""
-    from app import payments
-    from app.main import app
+def test_placing_an_order_answers_where_to_go_and_pay(client, auth, shipping_address):
+    cart = filled_cart(client, quantity=2)
 
-    # The client fixture installs a gateway that always agrees; this swaps it for one that
-    # refuses. Same seam, opposite answer - which is the argument for the seam existing.
-    app.dependency_overrides[payments.get_gateway] = lambda: declining_pay
+    body = client.post("/orders", headers={**cart, **auth}).json()
 
+    # The one thing this endpoint now exists to produce. Without it the buyer has an order
+    # and no way to pay for it.
+    assert body["checkout_url"].startswith("https://")
+    assert body["status"] == "pending_payment"
+
+
+def test_anybody_signed_in_can_mark_their_own_order_paid_without_paying(
+    client, auth, shipping_address
+):
+    """The hole this objective leaves open ON PURPOSE, pinned so it cannot close by accident.
+
+    No card, no Stripe, no money: sign in, place an order, call the endpoint the success
+    page calls, and the shop believes it. The next objective closes it - and closing it
+    turns out NOT to fix the worse problem, which is the buyer who pays and never returns.
+    """
     cart = filled_cart(client)
-    response = client.post("/orders", headers={**cart, **auth})
+    order_id = client.post("/orders", headers={**cart, **auth}).json()["id"]
 
-    # 402 and not 409: a client that wants to offer another card can tell from the number
-    # alone, without reading English. A 409 from this endpoint could equally be an empty
-    # cart, a line short of stock or a missing address.
-    assert response.status_code == 402
-    # Stripe's own wording, which is already written for a person.
-    assert "insufficient funds" in response.json()["detail"].lower()
-    # And nothing survived: no order, and the cart is still there to try again with.
-    assert client.get("/orders", headers=auth).json() == []
-    assert client.get("/cart", headers=cart).status_code == 200
+    confirmed = client.post(f"/orders/{order_id}/confirm", headers=auth)
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "paid"
+    assert client.get(f"/orders/{order_id}", headers=auth).json()["status"] == "paid"
+
+
+def test_confirming_somebody_elses_order_is_a_404(client, auth, other_auth, shipping_address):
+    cart = filled_cart(client)
+    order_id = client.post("/orders", headers={**cart, **auth}).json()["id"]
+
+    # Same answer as reading it: the endpoint is naive about payment, not about ownership.
+    assert client.post(f"/orders/{order_id}/confirm", headers=other_auth).status_code == 404

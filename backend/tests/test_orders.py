@@ -10,68 +10,69 @@ LAPTOP = 1
 MOUSE = 3
 
 
-def test_an_empty_cart_cannot_be_ordered(db, cart, user, shipping_address, pay):
+def test_an_empty_cart_cannot_be_ordered(db, cart, user, shipping_address):
     with pytest.raises(ValueError, match="The cart is empty"):
-        services.create_order(db, cart, user, pay)
+        services.create_order(db, cart, user)
 
 
-def test_an_order_needs_somewhere_to_go(db, cart, user, pay):
+def test_an_order_needs_somewhere_to_go(db, cart, user):
     # `user` has no address in this test: the fixture that adds one is not requested.
     services.set_cart_item(db, cart, LAPTOP, 1)
     with pytest.raises(ValueError, match="shipping address is required"):
-        services.create_order(db, cart, user, pay)
+        services.create_order(db, cart, user)
 
 
-def test_an_order_records_who_bought_it_and_where_it_went(db, cart, user, shipping_address, pay):
+def test_an_order_records_who_bought_it_and_where_it_went(db, cart, user, shipping_address):
     services.set_cart_item(db, cart, LAPTOP, 2)
 
-    order = services.create_order(db, cart, user, pay)
+    order = services.create_order(db, cart, user)
 
     assert order.user_id == user.id
     assert order.customer_email == user.email
     assert order.shipping_address_id == shipping_address.id
-    assert order.status == "paid"
+    # Third meaning of this word in three objectives. See the block at the end.
+    assert order.status == "pending_payment"
 
 
-def test_the_total_is_worked_out_on_the_server(db, cart, user, shipping_address, pay):
+def test_the_total_is_worked_out_on_the_server(db, cart, user, shipping_address):
     services.set_cart_item(db, cart, LAPTOP, 2)
     services.set_cart_item(db, cart, MOUSE, 3)
     laptop, mouse = db.get(Product, LAPTOP), db.get(Product, MOUSE)
     expected = laptop.price_cents * 2 + mouse.price_cents * 3
 
-    order = services.create_order(db, cart, user, pay)
+    order = services.create_order(db, cart, user)
 
     # Nothing about money arrives from the client: not a price, not a line total, not this.
     assert order.total_cents == expected
     assert order.total_cents == sum(i.price_cents * i.quantity for i in order.items)
 
 
-def test_buying_takes_the_units_out_of_stock(db, cart, user, shipping_address, pay):
+def test_buying_takes_the_units_out_of_stock(db, cart, user, shipping_address):
     before = db.get(Product, LAPTOP).stock
     services.set_cart_item(db, cart, LAPTOP, 2)
 
-    services.create_order(db, cart, user, pay)
+    services.create_order(db, cart, user)
 
     assert db.get(Product, LAPTOP).stock == before - 2
 
 
-def test_the_cart_disappears_once_it_has_become_an_order(db, cart, user, shipping_address, pay):
+def test_the_cart_disappears_once_it_has_become_an_order(db, cart, user, shipping_address):
     token = cart.token
     services.set_cart_item(db, cart, LAPTOP, 1)
 
-    services.create_order(db, cart, user, pay)
+    services.create_order(db, cart, user)
 
     assert services.get_cart(db, token) is None
     # And its lines went with it, through the cascade rather than by hand.
     assert db.query(CartItem).filter(CartItem.cart_token == token).count() == 0
 
 
-def test_changing_the_price_afterwards_does_not_rewrite_the_order(db, cart, user, shipping_address, pay):
+def test_changing_the_price_afterwards_does_not_rewrite_the_order(db, cart, user, shipping_address):
     # THE lesson of the cart checkpoint, and the reason order_items has a price column
     # while cart_items does not.
     catalogue_price = db.get(Product, LAPTOP).price_cents
     services.set_cart_item(db, cart, LAPTOP, 2)
-    order = services.create_order(db, cart, user, pay)
+    order = services.create_order(db, cart, user)
     paid, total = order.items[0].price_cents, order.total_cents
     # Read from the catalog, not from the order: otherwise this test would still pass if
     # the wrong price had been frozen, as long as it went on being wrong.
@@ -87,7 +88,7 @@ def test_changing_the_price_afterwards_does_not_rewrite_the_order(db, cart, user
     assert db.get(Product, LAPTOP).price_cents == 1  # the catalog really did change
 
 
-def test_one_line_short_of_stock_cancels_the_whole_order(db, cart, user, shipping_address, pay):
+def test_one_line_short_of_stock_cancels_the_whole_order(db, cart, user, shipping_address):
     services.set_cart_item(db, cart, LAPTOP, 1)
     services.set_cart_item(db, cart, MOUSE, 1)
     laptop_stock = db.get(Product, LAPTOP).stock
@@ -98,7 +99,7 @@ def test_one_line_short_of_stock_cancels_the_whole_order(db, cart, user, shippin
     db.commit()
 
     with pytest.raises(ValueError, match="Insufficient stock"):
-        services.create_order(db, cart, user, pay)
+        services.create_order(db, cart, user)
 
     db.expire_all()
     assert db.get(Product, LAPTOP).stock == laptop_stock  # the servable line did not move
@@ -107,10 +108,10 @@ def test_one_line_short_of_stock_cancels_the_whole_order(db, cart, user, shippin
 
 
 def test_an_order_can_only_be_read_by_the_person_who_placed_it(
-    db, cart, user, other_user, shipping_address, pay
+    db, cart, user, other_user, shipping_address
 ):
     services.set_cart_item(db, cart, LAPTOP, 1)
-    order = services.create_order(db, cart, user, pay)
+    order = services.create_order(db, cart, user)
 
     assert services.get_order(db, order.id, user) is not None
     # None, not an exception: the route turns it into the same 404 as an order that does
@@ -123,81 +124,102 @@ def test_an_order_that_does_not_exist_is_none(db, user):
 
 
 def test_the_list_of_orders_holds_only_your_own_and_the_newest_first(
-    db, user, other_user, shipping_address, pay
+    db, user, other_user, shipping_address
 ):
     ids = []
     for _ in range(2):
         cart = services.create_cart(db)
         services.set_cart_item(db, cart, LAPTOP, 1)
-        ids.append(services.create_order(db, cart, user, pay).id)
+        ids.append(services.create_order(db, cart, user).id)
 
     assert services.list_orders(db, other_user) == []
     assert [o.id for o in services.list_orders(db, user)] == sorted(ids, reverse=True)
 
 
 # --- Paying for it -----------------------------------------------------------------
-# From objective 16 the shop charges a card before it will admit an order exists. These
-# tests never reach Stripe: the `pay` and `declining_pay` fixtures stand in for it, which
-# is the only way to make a card be refused on demand.
+# From objective 17 the order is created FIRST and paid for somewhere else. These tests
+# never reach Stripe: the `gateway` fixture stands in for it, which is the only way to
+# decide what a session comes back as.
 
 
-def test_the_amount_charged_is_the_one_the_server_worked_out(
-    db, cart, user, shipping_address, pay
-):
-    services.set_cart_item(db, cart, LAPTOP, 2)
-    order = services.create_order(db, cart, user, pay)
-
-    assert len(pay.calls) == 1, "the gateway must be asked exactly once per order"
-    # The number that went to Stripe is the number the server added up. Nothing in the
-    # request said what to charge, and this is the test that keeps it that way.
-    assert pay.calls[0]["amount_cents"] == order.total_cents
-
-
-def test_what_was_bought_travels_to_the_gateway_as_text(db, cart, user, shipping_address, pay):
-    services.set_cart_item(db, cart, LAPTOP, 2)
-    order = services.create_order(db, cart, user, pay)
-    asked = pay.calls[0]
-
-    laptop = db.get(Product, LAPTOP)
-    # Stripe has no concept of lines: `amount` is one number. So the contents go as a
-    # description the buyer reads on their receipt, and as metadata we read in the
-    # dashboard. order_id is the one that matters - it is what turns a payment there back
-    # into an order here.
-    assert f"Order #{order.id}" in asked["description"]
-    assert f"2 x {laptop.name}" in asked["description"]
-    assert asked["metadata"]["order_id"] == str(order.id)
-    assert asked["metadata"]["user_id"] == str(user.id)
-    assert laptop.name in asked["metadata"]["items"]
-    assert asked["receipt_email"] == user.email
-
-
-def test_the_order_remembers_which_payment_paid_for_it(db, cart, user, shipping_address, pay):
+def test_an_order_is_born_owing_money(db, cart, user, shipping_address):
     services.set_cart_item(db, cart, LAPTOP, 1)
-    order = services.create_order(db, cart, user, pay)
 
-    # Without this column an order and its charge are two facts in two systems with
-    # nothing joining them, and every support question becomes an archaeology exercise.
-    # It is the FIRST charge, because a second one would overwrite this - the bet this
-    # single column is going to lose as soon as a customer retries with another card.
-    assert order.payment_intent_id == "pi_test_0001"
+    order = services.create_order(db, cart, user)
+
+    # The word phase 0 caught lying, on its third meaning. Nobody has paid, and for the
+    # first time in this project the shop says so.
+    assert order.status == "pending_payment"
+    assert order.payment_intent_id is None
 
 
-def test_a_refused_card_leaves_absolutely_nothing_behind(
-    db, cart, user, shipping_address, declining_pay
+def test_the_lines_sent_to_stripe_are_the_lines_of_the_order(
+    db, cart, user, shipping_address, gateway
 ):
-    """The important one. A decline must undo the order, the stock AND the cart."""
+    services.set_cart_item(db, cart, LAPTOP, 2)
+    order = services.create_order(db, cart, user)
+
+    url = services.start_checkout(db, order, gateway)
+
+    assert len(gateway.starts) == 1, "the gateway must be asked exactly once per order"
+    asked = gateway.starts[0]
+    assert asked["order_id"] == order.id
+    assert asked["customer_email"] == user.email
+    assert url.startswith("https://")
+
+    # Real line items, which the previous design could not send: a PaymentIntent takes one
+    # number. This is what puts the product name on Stripe's page and on the receipt.
+    laptop = db.get(Product, LAPTOP)
+    line = asked["lines"][0]
+    assert line["quantity"] == 2
+    assert line["price_data"]["product_data"]["name"] == laptop.name
+    assert line["price_data"]["unit_amount"] == laptop.price_cents
+    # And Stripe adds the lines up itself now, so its sum has to be our total.
+    total = sum(l["price_data"]["unit_amount"] * l["quantity"] for l in asked["lines"])
+    assert total == order.total_cents
+
+
+def test_stripe_is_told_the_frozen_price_and_not_the_catalogue_one(
+    db, cart, user, shipping_address, gateway
+):
+    services.set_cart_item(db, cart, LAPTOP, 1)
+    order = services.create_order(db, cart, user)
+    bought_at = db.get(Product, LAPTOP).price_cents
+
+    # Somebody edits the catalogue while this customer is still deciding.
+    db.get(Product, LAPTOP).price_cents = bought_at + 50_000
+    db.flush()
+    services.start_checkout(db, order, gateway)
+
+    # They pay what they were shown. The order froze it, and the checkout reads the order.
+    assert gateway.starts[0]["lines"][0]["price_data"]["unit_amount"] == bought_at
+
+
+def test_the_order_remembers_which_checkout_it_was_sent_to(
+    db, cart, user, shipping_address, gateway
+):
+    services.set_cart_item(db, cart, LAPTOP, 1)
+    order = services.create_order(db, cart, user)
+
+    services.start_checkout(db, order, gateway)
+
+    # The only thread joining a payment over at Stripe to an order over here. One column,
+    # one session - the bet that is lost the moment somebody retries with another card.
+    assert order.checkout_session_id == "cs_test_0001"
+
+
+def test_a_cart_becomes_an_order_even_though_nobody_has_paid(
+    db, cart, user, shipping_address
+):
+    """The uncomfortable consequence, pinned so nobody 'fixes' it by accident."""
     stock_before = db.get(Product, LAPTOP).stock
-    token = cart.token  # a cart is found by its token, not by an id
+    token = cart.token
     services.set_cart_item(db, cart, LAPTOP, 2)
 
-    with pytest.raises(Exception) as refusal:
-        services.create_order(db, cart, user, declining_pay)
-    assert "insufficient funds" in str(refusal.value)
+    services.create_order(db, cart, user)
 
-    # The charge happens after the stock has been taken and the order built, so all of
-    # that has to come back. It does because the whole checkout is one transaction - the
-    # thing that stops being true the moment the payment stops being part of it.
-    db.rollback()
-    assert db.get(Product, LAPTOP).stock == stock_before, "stock was taken for a sale that failed"
-    assert db.get(Cart, token) is not None, "the cart died with a payment that never happened"
-    assert services.list_orders(db, user) == []
+    # Stock gone and cart gone, for an order that is not paid. Both were decided in phase
+    # 0: the stock is RESERVED, and the pending order is what gets retried - not the cart.
+    # What neither of them has yet is the thing that gives the stock back.
+    assert db.get(Product, LAPTOP).stock == stock_before - 2
+    assert db.get(Cart, token) is None

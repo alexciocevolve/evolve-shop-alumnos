@@ -91,6 +91,39 @@ services:
     volumes:
       - ./data/images:/app/images:ro
 
+  # The toolchain: alembic and pytest, run where the application runs. See
+  # backend/Dockerfile.tools for why this is not optional on this machine.
+  #
+  #     docker compose --profile tools run --rm tools pytest
+  #     docker compose --profile tools run --rm tools alembic upgrade head
+  #     docker compose --profile tools run --rm tools alembic revision --autogenerate -m "..."
+  #
+  # The code is a bind mount, not a copy: a migration generated in here appears on the host
+  # straight away, and an edit on the host is visible in here without rebuilding anything.
+  tools:
+    profiles: [tools]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.tools
+    # The WHOLE repository, not just backend/, and the working directory one level in.
+    # app/config.py finds the images with Path(__file__).parents[2], counting app -> backend
+    # -> repository root. Mounting only backend/ makes that land on `/`, and the app refuses
+    # to import with "Directory '/data/images' does not exist". Same shape as the host, same
+    # answer.
+    volumes:
+      - .:/src
+    working_dir: /src/backend
+    environment:
+      # `db`, the service name, because this runs inside the Compose network - not the
+      # localhost:5432 of the host's .env.
+      DATABASE_URL: postgresql+psycopg://shop:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing in .env}@db:5432/shop
+      # conftest.py overwrites this with a fake anyway; it is here because app.config
+      # refuses to import without it, which is the behaviour we asked for.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY missing in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+
   # A toolbox for looking INSIDE the backend while it runs. It is not part of the shop and
   # it does not start with it:
   #

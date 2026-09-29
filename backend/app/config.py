@@ -50,6 +50,15 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
+# Where the SHOP lives, as a browser sees it. Stripe needs it to send the buyer back after
+# paying, so unlike everything else here it is not about reaching a service: it is an
+# address that has to work in somebody else's browser, typed by Stripe into a redirect.
+#
+# It is the frontend's address and not the API's - the buyer returns to a page, not to an
+# endpoint - so it is usually the first entry of CORS_ORIGINS, and the default is the Vite
+# dev server for the same reason.
+PUBLIC_WEB_URL = os.environ.get("PUBLIC_WEB_URL", CORS_ORIGINS[0] if CORS_ORIGINS else "http://localhost:5173").rstrip("/")
+
 # Folder with the product images; the API serves it as static files under /images.
 # parents[2] walks up from app/config.py to the root of the repository: app -> backend -> root.
 # Docker mounts that same folder somewhere else and sets IMAGES_DIR to say where.

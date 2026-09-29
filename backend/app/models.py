@@ -111,17 +111,24 @@ class Order(Base):
     # frozen the same way the price is. Changing the account email later must not rewrite
     # where this order was confirmed.
     customer_email: Mapped[str] = mapped_column(String(200))
-    # Still "paid", and still the default - but from objective 16 on it is TRUE. Creating the
-    # order and charging for it are once again the same act, because the charge is made and
-    # waited for inside this same transaction: if Stripe says no, the order never exists.
-    # That is what buys the right to keep this line, and what the next phase takes away.
-    status: Mapped[str] = mapped_column(String(20), server_default="paid")
-    # The Stripe PaymentIntent that paid for this. Nullable because every order placed before
-    # there was a gateway has none, and this column is not rewriting history.
+    # An order is now born OWING money, and that word changed twice in two objectives.
     #
-    # One column, one payment - and that is exactly the bet that will be lost. A customer
-    # whose card is refused pays with another one, a second intent is created, and this column
-    # forgets the first. When that starts mattering it becomes a table of its own.
+    # Until objective 15 it said "paid" and was a lie: nobody had paid. Objective 16 made it
+    # true by charging inside this same transaction - the order was paid or it never existed.
+    # Objective 17 takes that away again, because the buyer now types their card on Stripe's
+    # own page, and somebody who is in the middle of typing has an order that exists and is
+    # not paid yet. There is no way to have a payment screen and keep the old certainty.
+    status: Mapped[str] = mapped_column(String(20), server_default="pending_payment")
+    # The Checkout Session the buyer was sent to. Written when the order is created, before
+    # anybody has paid anything, and it is what the return from Stripe is matched against.
+    checkout_session_id: Mapped[str | None] = mapped_column(String(100))
+    # The Stripe PaymentIntent that paid for this, once something did. Nullable because every
+    # order placed before there was a gateway has none, and because an order that is still
+    # being paid for has none either.
+    #
+    # Two columns, one payment each - and that is exactly the bet that will be lost. A
+    # customer whose card is refused pays with another one, a second session is created, and
+    # these columns forget the first. When that starts mattering they become a table.
     payment_intent_id: Mapped[str | None] = mapped_column(String(100))
     total_cents: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

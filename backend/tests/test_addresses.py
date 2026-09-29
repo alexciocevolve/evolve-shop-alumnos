@@ -47,11 +47,11 @@ def test_changing_an_address_writes_a_new_row_and_retires_the_old_one(db, user):
     assert second.is_active is True
 
 
-def test_an_order_keeps_the_address_it_was_sent_to_after_the_customer_moves(db, user, pay):
+def test_an_order_keeps_the_address_it_was_sent_to_after_the_customer_moves(db, user):
     services.save_address(db, user, is_billing=False, data=MADRID)
     cart = services.create_cart(db)
     services.set_cart_item(db, cart, 1, 1)
-    order = services.create_order(db, cart, user, pay)
+    order = services.create_order(db, cart, user)
 
     services.save_address(db, user, is_billing=False, data=VALENCIA)
 

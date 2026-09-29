@@ -1,0 +1,38 @@
+# The toolchain, in a container, because this laptop stopped being able to run it.
+#
+# WHY THIS EXISTS. Windows Application Control started blocking the unsigned libpq DLL that
+# `psycopg[binary]` ships, so on the host every command that touches PostgreSQL dies with:
+#
+#     ImportError: no pq wrapper available.
+#     - couldn't import psycopg 'binary' implementation: DLL load failed while importing pq:
+#       Una directiva de Control de aplicaciones bloqueo este archivo.
+#
+# That is alembic AND pytest AND the whole backend, all at once, and it is not something a
+# code change can fix: it is a machine policy. The alternative was to ask somebody to turn
+# off a security feature, which is a bad trade for a convenience.
+#
+# So the tools run where the application already runs. Two things fall out of that, and both
+# are worth saying in class:
+#
+#   · The tests now run against the same Python, the same libraries and the same operating
+#     system as production. That was always the better answer; the DLL just forced it.
+#   · The old trap disappears. Running `alembic upgrade` from the host moved the database
+#     ahead of the image baked into the container, and the shop then refused to start with
+#     "Can't locate revision". Same place, same code, no gap.
+#
+# It is NOT the image that gets deployed: that one is ../backend/Dockerfile, it has no
+# pytest in it, and it should stay that way.
+#
+#     docker compose --profile tools run --rm tools pytest
+#     docker compose --profile tools run --rm tools alembic upgrade head
+
+FROM python:3.12-slim
+
+WORKDIR /src
+
+# Dev requirements, which pull in the production ones with `-r requirements.txt`.
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+# No COPY of the code on purpose: it arrives as a bind mount, so an edit on the host is
+# visible here immediately and nothing has to be rebuilt to run the tests again.

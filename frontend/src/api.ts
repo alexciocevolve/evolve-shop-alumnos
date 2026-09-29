@@ -147,8 +147,19 @@ export const setCartItem = (productId: number, quantity: number) =>
 export const removeCartItem = (productId: number) =>
   request<Cart>(`/cart/items/${productId}`, { method: "DELETE" });
 
+// The order, plus the one-off address to go and pay at. `checkout_url` is not stored
+// anywhere and is not part of the order: it belongs to this single answer, because the
+// browser is expected to leave for Stripe immediately.
+export type PlacedOrder = Order & { checkout_url: string };
+
 // No body: the server decides the prices, the total and who is buying.
-export const createOrder = () => request<Order>("/orders", { method: "POST" });
+export const createOrder = () => request<PlacedOrder>("/orders", { method: "POST" });
+
+// Called by the success page when Stripe sends the buyer back. It tells the shop nothing
+// Stripe said - it just asks it to believe that the payment happened, which is exactly
+// the weakness this objective leaves in place on purpose.
+export const confirmOrder = (id: number) =>
+  request<Order>(`/orders/${id}/confirm`, { method: "POST" });
 
 export const getOrder = (id: number) => request<Order>(`/orders/${id}`);
 

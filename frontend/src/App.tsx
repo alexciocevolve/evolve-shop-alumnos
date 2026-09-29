@@ -6,6 +6,8 @@ import Account from "./pages/Account";
 import Auth from "./pages/Auth";
 import Catalog from "./pages/Catalog";
 import Cart from "./pages/Cart";
+import CheckoutCancel from "./pages/CheckoutCancel";
+import CheckoutSuccess from "./pages/CheckoutSuccess";
 import OrderConfirmation from "./pages/OrderConfirmation";
 
 // One place for anything the cart could not do, whichever screen asked for it: adding
@@ -36,6 +38,10 @@ export default function App() {
               <Route path="/account" element={<Account />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/cart" element={<Cart />} />
+              {/* Where Stripe sends the buyer back. Two addresses that are not
+                  reached from inside the shop: somebody else links to them. */}
+              <Route path="/checkout/success" element={<CheckoutSuccess />} />
+              <Route path="/checkout/cancel" element={<CheckoutCancel />} />
               <Route path="/orders/:id" element={<OrderConfirmation />} />
             </Routes>
           </main>

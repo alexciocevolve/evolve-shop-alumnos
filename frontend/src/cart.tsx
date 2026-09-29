@@ -8,7 +8,7 @@ import {
   setCartItem,
   type ApiError,
   type Cart,
-  type Order,
+  type PlacedOrder,
 } from "./api";
 
 type CartValue = {
@@ -18,7 +18,7 @@ type CartValue = {
   clearError: () => void;
   setQuantity: (productId: number, quantity: number) => Promise<void>;
   removeItem: (productId: number) => Promise<void>;
-  placeOrder: () => Promise<Order | null>;
+  placeOrder: () => Promise<PlacedOrder | null>;
 };
 
 const CartContext = createContext<CartValue | null>(null);
@@ -70,7 +70,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     await run(() => removeCartItem(productId));
   }
 
-  async function placeOrder(): Promise<Order | null> {
+  async function placeOrder(): Promise<PlacedOrder | null> {
     setError(null);
     try {
       const order = await createOrder();

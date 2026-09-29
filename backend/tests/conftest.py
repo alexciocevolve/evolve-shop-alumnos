@@ -33,7 +33,7 @@ os.environ["DATABASE_URL"] = TEST_URL
 # app.config requires a Stripe key to exist, so one is put here rather than depending on
 # whatever .env happens to hold. It is a key-shaped string and nothing more: no test in
 # this folder ever reaches Stripe, because every one of them is handed the `pay` fixture
-# below instead of the real gateway. If a test ever DID reach out, this key would make it
+# instead of the real gateway. If a test ever DID reach out, this key would make it
 # fail loudly - which is the behaviour we want from an accident like that.
 #
 # Assigned and not setdefault: the day .env holds a REAL test key, these tests must still
@@ -120,7 +120,7 @@ def count_queries(db):
 
 
 @pytest.fixture
-def client(db, pay):
+def client(db, gateway):
     """The whole application, driven over HTTP, but writing to the test's transaction.
 
     Overriding get_db is what joins the two: without it the app would open its own
@@ -131,14 +131,14 @@ def client(db, pay):
     The gateway is overridden the same way and for a stronger reason: without this line
     every test that buys something would put a real charge through Stripe. It is the same
     seam, used twice, which is the argument for having made the gateway a dependency at
-    all. A test that needs a refusal overrides it again with `declining_pay`.
+    all. A test that needs a different outcome edits `gateway.says` before asking.
     """
 
     def use_the_test_session():
         yield db
 
     app.dependency_overrides[get_db] = use_the_test_session
-    app.dependency_overrides[payments.get_gateway] = lambda: pay
+    app.dependency_overrides[payments.get_gateway] = lambda: gateway
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -204,37 +204,39 @@ def cart(db):
 
 
 @pytest.fixture
-def pay():
-    """A payment gateway that always says yes, and keeps a note of what it was asked.
+def gateway():
+    """A Stripe that always opens the door, and keeps a note of what it was asked.
 
-    Every test that creates an order gets this instead of the real one. Not to go faster:
-    to make the tests SAY something. A test that talks to Stripe is testing Stripe's
-    availability, fails on a bad wifi, and cannot make a card be refused on demand.
+    Every test that buys something gets this instead of the real one. Not to go faster: to
+    make the tests SAY something. A test that talks to Stripe is testing Stripe's uptime,
+    goes red when somebody else has a bad day, and cannot decide what a session comes back
+    as. This one can.
 
-    `pay.calls` is the list of keyword arguments it received, which is how a test checks
-    that the amount and the description were built from the order and not from the client.
+    `gateway.starts` is the list of keyword arguments the shop sent, which is how a test
+    checks that the lines and the amounts were built from the order and not from the
+    client. `gateway.says` is what a later lookup will claim happened, so a test can make
+    the buyer's payment succeed, fail, or still be unpaid.
     """
 
-    def gateway(**asked):
-        gateway.calls.append(asked)
-        # The id shape is Stripe's, so anything that parses it in future keeps working.
-        # The amount echoes back what was asked, exactly as a successful charge does.
-        return payments.Charge(
-            payment_intent_id=f"pi_test_{len(gateway.calls):04d}",
-            amount_cents=asked["amount_cents"],
-        )
+    class Double:
+        def __init__(self):
+            self.starts = []
+            # What fetch() reports back. A test overwrites it before asking.
+            self.says = {"payment_status": "paid", "amount_total": None,
+                         "payment_intent": "pi_test_0001", "order_id": None}
 
-    gateway.calls = []
-    return gateway
+        def start(self, **asked):
+            self.starts.append(asked)
+            n = len(self.starts)
+            # Ids shaped like Stripe's, so anything that parses them keeps working.
+            return payments.Checkout(
+                session_id=f"cs_test_{n:04d}",
+                url=f"https://checkout.stripe.test/c/pay/cs_test_{n:04d}",
+            )
+
+        def fetch(self, session_id):
+            return {**self.says, "session_id": session_id}
+
+    return Double()
 
 
-@pytest.fixture
-def declining_pay():
-    """A gateway that refuses, with the wording Stripe really uses for a spent card."""
-
-    def gateway(**asked):
-        gateway.calls.append(asked)
-        raise payments.PaymentDeclined("Your card has insufficient funds.")
-
-    gateway.calls = []
-    return gateway

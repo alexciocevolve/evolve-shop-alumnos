@@ -108,7 +108,7 @@ jobs:
         run: npm run build
 
   backend:
-    name: Backend (166 tests)
+    name: Backend (168 tests)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,7 +161,7 @@ jobs:
 
       - run: pip install -r requirements-dev.txt
 
-      # 166 tests: services, HTTP routes, the two-buyer race, every migration up and down
+      # 168 tests: services, HTTP routes, the two-buyer race, every migration up and down
       # again, the schema-drift check, the committed OpenAPI contract, what the logs are
       # allowed to say - and, since the shop started charging, a gateway that is stood in
       # for rather than called.
@@ -219,7 +219,7 @@ jobs:
 
       # These are the only tests that can see a shop that is misconfigured rather than
       # miswritten: migrations that never ran, CORS naming the wrong address, images that
-      # nobody mounted. With CORS pointed elsewhere the other 200 stay green and two of
+      # nobody mounted. With CORS pointed elsewhere the other 202 stay green and two of
       # these fail.
       - name: Run the end-to-end tests
         working-directory: e2e

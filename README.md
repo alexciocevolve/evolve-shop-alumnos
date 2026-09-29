@@ -122,46 +122,50 @@ tocar una línea de código.
 curl -s "http://localhost:8000/categories"
 ```
 
-## Cobrar con Stripe (fase 1: el pedido se cobra antes de existir)
+## Cobrar con Stripe
 
-Desde este checkpoint, `POST /orders` **cobra** antes de guardar el pedido, con una tarjeta de prueba de
-Stripe. Hace falta una clave de prueba en `.env` (`STRIPE_SECRET_KEY=sk_test_...`, ver `.env.example`); sin
-ella la API no arranca, a propósito. Una clave `sk_test_` no cobra a nadie.
+Hace falta una clave de prueba en `.env` (`STRIPE_SECRET_KEY=sk_test_...`, ver `.env.example`); sin ella
+la API no arranca, a propósito. Una clave `sk_test_` no cobra a nadie. Todo lo que sabe de Stripe está en
+[`backend/app/payments.py`](backend/app/payments.py), y los tests sustituyen la pasarela entera: ninguno
+llama a Stripe.
 
-Todo lo que sabe de Stripe está en [`backend/app/payments.py`](backend/app/payments.py). El resto de la
-tienda pide un cobro y recibe un `Charge` o un `PaymentDeclined`, y los tests sustituyen la pasarela entera
-por una función: ninguno llama a Stripe.
+### Fase 1 (`chkp25-pay-sync`): el pedido se cobra antes de existir
 
-El cobro va **dentro** de la transacción del pedido, y eso tiene dos consecuencias que el código no
-esconde: mientras Stripe contesta, los productos del pedido están bloqueados para todos los demás; y si el
-proceso muere entre el cobro y el `commit`, Stripe tiene el dinero y la tienda no tiene el pedido.
+`POST /orders` cobraba una tarjeta de prueba **dentro** de la transacción del pedido. Mientras Stripe
+contestaba, los productos estaban bloqueados para todos los demás, y si el proceso moría entre el cobro y
+el `commit`, Stripe tenía el dinero y la tienda no tenía pedido. En ese checkpoint cada cobro dejaba una
+línea `payment.charge` (`success`, `declined`, o `unknown` si Stripe no contestaba y **quizá sí había
+cobrado**) y existía una línea `payment.orphaned`, de nivel `critical`, para el peor caso: cobrado y sin
+pedido guardado, con el `payment_intent_id` necesario para devolver el dinero. Medido con la clave de
+prueba, Stripe tardaba entre 0,7 y 1,2 segundos por cobro, y ese era el tiempo que los productos
+estaban bloqueados.
 
-### Lo que cuentan los logs de un cobro
+### Fase 2 (`chkp26-pay-front`): el comprador teclea su tarjeta
 
-Aquí los logs dejan de ser una comodidad. Cada cobro escribe una línea `payment.charge`, y de lo que
-dice depende qué hay que hacer:
+Ahora el pedido se crea **sin pagar** (`pending_payment`), la transacción se cierra, y solo entonces se
+abre una página de pago de Stripe (Checkout). Ya nadie espera a Stripe con los productos bloqueados. A
+cambio, el pedido existe antes de que alguien pague, y la tienda solo se entera del pago si el
+comprador vuelve a la página de éxito, que llama a `POST /orders/{id}/confirm`. Esa ruta **se cree a quien
+la llama**, a propósito: es lo que hace casi toda primera integración, y el paso siguiente del curso
+enseña cómo se rompe.
 
-| `event.outcome` | Nivel | Qué significa | Qué hacer |
-|---|---|---|---|
-| `success` | info | Cobrado. Lleva `shop.payment_intent_id` | Nada |
-| `failure` (`event.reason: declined`) | warning | La tarjeta dijo que no. No se ha cobrado nada | Nada: el cliente ya lo sabe (`402`) |
-| `unknown` (`event.reason: gateway_error`) | **error** | Stripe no contestó o falló. **Puede que sí se haya cobrado** | Buscar el `shop.order_id` en el panel de Stripe antes de decirle nada al cliente |
+Los logs de esta fase:
 
-Y hay una cuarta línea que ojalá no aparezca nunca: **`payment.orphaned`**, nivel `critical`. Sale cuando el
-cobro ha ido bien y después el pedido no se ha podido guardar. Stripe tiene el dinero y la tienda no tiene
-pedido. Esa línea es entonces **el único registro de que alguien ha pagado**, y lleva justo lo necesario
-para encontrar el pago y devolverlo: `shop.payment_intent_id`, el importe y el `user.id`. Hay un test que la
-provoca haciendo fallar el `commit` justo después de cobrar.
+| `event.action` | Nivel | Qué cuenta |
+|---|---|---|
+| `order.create` | info | El pedido, con `shop.order_status: pending_payment` |
+| `checkout.start` | info / **error** | La página de pago abierta, con `shop.checkout_session_id` y lo que tardó Stripe en crearla (en clase, unos 0,4 segundos). Si Stripe falla aquí es un error: el pedido ya está guardado y se queda pendiente sin forma de pagarlo |
+| `order.confirm` | info | El pedido marcado como pagado, con `shop.verified_with_stripe: false` |
 
-Tres detalles de estas líneas:
+Dos búsquedas en Kibana que cuentan lo que la tienda no ve:
 
-- **`event.duration_ms` es lo que tardó Stripe**, no la petición entera. Como los productos están
-  bloqueados mientras tanto, ese número es también cuánto ha esperado cualquier otro comprador de esos
-  productos. Medido con la clave de prueba desde clase: entre 0,7 y 1,2 segundos por cobro.
-- **`shop.payment_intent_id` no es un secreto**: sin la clave no sirve para nada, y es exactamente lo que
-  se escribe en el buscador del panel de Stripe para encontrar el pago.
-- **Nunca aparecen** la clave de Stripe, el correo del cliente ni nada de la tarjeta. La tarjeta ni
-  siquiera pasa por la tienda: la tiene Stripe, que es la razón de usar Stripe.
+- **`order.confirm` con `shop.verified_with_stripe: false`**: todas, hoy. El campo existe para que el
+  defecto de esta fase no se pueda olvidar: un pedido marcado como pagado sin preguntar a Stripe. El día
+  que la confirmación se compruebe de verdad, ese campo pasará a `true`, y un `false` será una alarma.
+- **Un `checkout.start` sin su `order.confirm`** (se unen por `shop.order_id`): alguien que abrió la página
+  de pago y no volvió. O no pagó, o **pagó y cerró la pestaña**, y entonces Stripe tiene el dinero y el
+  pedido sigue pendiente. Los logs no pueden distinguir los dos casos; solo Stripe puede. Es exactamente
+  el problema que resuelve el paso siguiente.
 
 ## Integración continua
 
@@ -513,6 +517,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp23-deploy-render-same-region` | `004a_price_trigger` | La base de datos y la API en la misma región, y la tienda diciendo al arrancar si llega a su base de datos | hecho |
 | `chkp24-ask-user-feedback` | `004a_price_trigger` | La gráfica rehecha tras enseñarla: el precio más bajo y el más alto marcados; la regla de «sin clases» deja de saltar con prosa | hecho |
 | `chkp25-pay-sync` | `005_payment` | Stripe, fase 1: el pedido se cobra antes de existir, y cada cobro deja una línea que dice qué hacer | hecho |
+| `chkp26-pay-front` | `006_checkout` | Stripe, fase 2: el comprador paga en la página de Stripe; los logs enseñan lo que la tienda no ve | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -864,9 +869,9 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |
 | `cart.item.set` | info / warning | `PUT /cart/items/{id}`, bien (`success`) o sin stock (`failure`) | `shop.product_id`, `shop.quantity`, `error.message` si falla, y el resumen del carrito |
 | `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
-| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `shop.payment_intent_id`, `user.id`; `event.reason: payment_declined` y `error.message` si la tarjeta dice que no |
-| `payment.charge` | info / warning / error | El cobro en Stripe, dentro de `POST /orders` (ver [Cobrar con Stripe](#cobrar-con-stripe-fase-1-el-pedido-se-cobra-antes-de-existir)) | `shop.order_id`, `user.id`, `shop.amount_cents`, `shop.charged_cents`, `shop.payment_intent_id`, `event.duration_ms`, `event.reason` |
-| `payment.orphaned` | critical | Cobrado, pero el pedido no se pudo guardar | `shop.payment_intent_id`, `shop.charged_cents`, `shop.order_id`, `user.id` |
+| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_status`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `user.id`, `error.message` si falla |
+| `checkout.start` | info / error | La página de pago de Stripe, abierta tras crear el pedido (ver [Cobrar con Stripe](#cobrar-con-stripe)) | `shop.order_id`, `user.id`, `shop.amount_cents`, `shop.checkout_session_id`, `shop.checkout_lines`, `event.duration_ms`, `error.message` si falla |
+| `order.confirm` | info | `POST /orders/{id}/confirm`, al volver de Stripe | `shop.order_id`, `user.id`, `shop.previous_status`, `shop.checkout_session_id`, `shop.verified_with_stripe` |
 | `order.list` | info | `GET /orders`, los pedidos de quien pregunta | `user.id`, `shop.orders_returned` |
 | `order.miss` | warning | `GET /orders/{id}` que no existe o que es de otra persona | `user.id`, `shop.order_id` |
 | `user.register` | info / warning | `POST /users`, hecho o con el correo ya registrado | `user.id` si sale bien, `event.reason: email_taken` si no |

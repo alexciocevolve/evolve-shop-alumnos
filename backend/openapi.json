@@ -306,16 +306,6 @@
               }
             }
           },
-          "402": {
-            "description": "The card was refused. Nothing was charged and no order was created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            }
-          },
           "409": {
             "description": "The cart is empty, a line is short of stock, or the account has no shipping address yet",
             "content": {
@@ -401,6 +391,83 @@
         ],
         "summary": "Get Order",
         "operationId": "get_order_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Order Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "No Authorization header, or a token that is unknown or has expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such order, OR it belongs to somebody else - the same answer to both",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{order_id}/confirm": {
+      "post": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Confirm Order",
+        "description": "Called by the success page when Stripe sends the buyer back.\n\nTHIS ENDPOINT IS WRONG ON PURPOSE, and the next objective is about how. It believes\nwhoever calls it: sign in, create an order, call this, and the goods are yours without\na card ever being touched. Signing in does not help - it is your own order you are\nmarking as paid.\n\nThe cheap fix is known and deliberately not applied yet: take the `session_id` Stripe\nput in the return address, ask Stripe what really happened, and check both the amount\nand which order the session says it belongs to. It is a few lines. What makes it worth\nwaiting for is that those few lines fix the forgery and DO NOTHING about the worse\nproblem - the buyer who pays and never comes back, so this is never called at all.",
+        "operationId": "confirm_order_orders__order_id__confirm_post",
         "parameters": [
           {
             "name": "order_id",
