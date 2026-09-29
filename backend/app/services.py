@@ -1,7 +1,12 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.models import Product
+from app.models import Category, Product
+
+
+def list_categories(db: Session) -> list[Category]:
+    # Ordered by name so the buttons on screen never change places between page loads.
+    return list(db.scalars(select(Category).order_by(Category.name)))
 
 
 def get_product(db: Session, product_id: int) -> Product | None:
@@ -15,8 +20,17 @@ def list_products(
     # Unlike OFFSET, the database jumps straight to that point through the primary-key
     # index, and rows inserted meanwhile can never shift a page or repeat an item.
     query = select(Product).where(Product.id > cursor)
+
+    # The filter still arrives as a name ("laptops"), because that is what the address bar
+    # shows and what the API promised; the category now lives in its own table, so reaching
+    # the name means joining. The caller never notices that the schema changed.
     if category is not None:
-        query = query.where(Product.category == category)
+        query = query.join(Product.category).where(Category.name == category)
+
+    # Every product is about to be asked for its category name. Without this line SQLAlchemy
+    # would fetch each one with its own SELECT: 1 query for the page plus 1 per product
+    # (the "N+1 queries" problem). joinedload brings them in the same query.
+    query = query.options(joinedload(Product.category))
 
     # Ask for one row more than the page size: if it arrives, there is a next page,
     # and we know it without running a second query.

@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { listProducts, type ApiError, type Product } from "../api";
+import { listCategories, listProducts, type ApiError, type Product } from "../api";
+import { useData } from "../useData";
 import ProductCard from "../components/ProductCard";
 
-// The API has no endpoint that lists the categories, so they are fixed here.
-const CATEGORIES = ["laptops", "monitors", "peripherals", "storage", "networking"];
-
-// This page does NOT use the useData hook, and that is the point: useData REPLACES its data
-// every time it loads (one screen, one answer). Here each answer is ADDED to the previous
-// ones, so the state has to live in the page. The idea of ignoring an answer that arrives
-// late is the same one; useData calls it `stale`, and here it is the `generation` counter.
+// Two loads on one screen, and each one needs a different tool.
+//
+// The categories are loaded ONCE and REPLACE what was there: that is exactly what the
+// useData hook does, in one line.
+//
+// The products cannot use it: each answer is ADDED to the previous ones instead of
+// replacing them, so the list has to be kept here. The idea of ignoring an answer that
+// arrives late is the same in both; useData calls it `stale`, here it is `generation`.
 export default function Catalog() {
+  const categories = useData(listCategories);
   const [category, setCategory] = useState<string | undefined>();
   const [items, setItems] = useState<Product[]>([]);
   // Cursor of the next page to ask for. 0 means "from the start", so the first page goes
@@ -68,20 +71,33 @@ export default function Catalog() {
 
   return (
     <>
-      <div className="filters">
-        <button
-          className="chip"
-          aria-pressed={category === undefined}
-          onClick={() => selectCategory(undefined)}
-        >
-          All
-        </button>
-        {CATEGORIES.map((c) => (
-          <button key={c} className="chip" aria-pressed={category === c} onClick={() => selectCategory(c)}>
-            {c}
+      {/* The buttons are whatever the database holds: adding a category there makes one
+          appear here, with nothing to change in this file. While they load there are no
+          buttons, and if they fail the catalog below still works, unfiltered. */}
+      {categories.phase === "ready" && (
+        <div className="filters">
+          <button
+            className="chip"
+            aria-pressed={category === undefined}
+            onClick={() => selectCategory(undefined)}
+          >
+            All
           </button>
-        ))}
-      </div>
+          {categories.data.map((c) => (
+            <button
+              key={c.id}
+              className="chip"
+              aria-pressed={category === c.name}
+              onClick={() => selectCategory(c.name)}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {categories.phase === "error" && (
+        <p className="status error">Categories unavailable: {categories.detail}</p>
+      )}
 
       <div className="grid">
         {items.map((product) => (

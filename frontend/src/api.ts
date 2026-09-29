@@ -34,6 +34,10 @@ export type Product = {
 
 export type ProductPage = { items: Product[]; next_cursor: number | null };
 
+export type Category = { id: number; name: string };
+
+export const listCategories = () => request<Category[]>("/categories");
+
 export function listProducts({ category, cursor }: { category?: string; cursor?: number } = {}) {
   const params = new URLSearchParams();
   if (category) params.set("category", category);

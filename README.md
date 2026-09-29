@@ -39,6 +39,52 @@ Frontend, en `http://localhost:5173`:
 cd frontend && npm install && npm run dev
 ```
 
+## Las categorías, en su propia tabla (EXPAND-CONTRACT)
+
+Al principio la categoría era una columna de texto en `products`: el nombre `'laptops'` repetido en ocho
+filas. Ahora es una tabla `categories` y `products.category_id` que la referencia. Así el nombre se guarda
+una sola vez, renombrar una categoría es un `UPDATE`, y una errata no puede inventarse una categoría nueva
+porque la clave foránea la rechaza.
+
+El cambio se hace en **dos migraciones**, no en una, y esa es la lección:
+
+| Revisión | Qué hace | ¿Rompe el código que ya está funcionando? |
+|---|---|---|
+| `001c_categories_expand` | Crea `categories`, la llena con los nombres que ya había y añade `products.category_id` **anulable** | **No.** La columna de texto sigue ahí y sigue siendo la que lee la aplicación |
+| `001d_categories_contract` | Pone `category_id` como obligatoria y **borra** la columna de texto | **Sí.** Todo lo que aún leyera `products.category` deja de funcionar |
+
+Entre las dos hay una parada: el hueco donde se despliega el código nuevo y se comprueba que nadie usa ya
+la columna vieja. Si algo va mal, el `downgrade` de CONTRACT vuelve atrás **con los datos**, porque el
+nombre se puede reconstruir siguiendo la clave foránea. Hacerlo en una sola migración obligaría a parar la
+tienda. Se puede ver el esquema encoger y volver a crecer:
+
+```bash
+docker compose exec backend alembic downgrade 001c_categories_expand
+```
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+Dos cosas que `--autogenerate` **no** sabe hacer aquí, y que están corregidas a mano en las revisiones:
+
+- **Mover los datos.** Compara esquemas, no datos, así que creó la tabla vacía y la columna llena de
+  `NULL`. El traspaso está escrito a mano, y lee los nombres de los propios productos (`SELECT DISTINCT`)
+  en vez de llevar una lista escrita, para que no se pueda olvidar ninguno.
+- **Deshacer CONTRACT.** Generó un `add_column` con `NOT NULL` y sin valor por defecto, que sobre una tabla
+  con 36 filas PostgreSQL rechaza (*column "category" contains null values*). El `downgrade` correcto tiene
+  tres pasos: añadir la columna anulable, rellenarla desde `categories`, y solo entonces exigir `NOT NULL`.
+
+**La API no cambió.** `GET /products` sigue enviando `"category": "laptops"`, un nombre, que ahora se lee de
+la fila relacionada. El contrato con el navegador es independiente del esquema. Lo que sí es nuevo es
+`GET /categories`, que devuelve `[{"id": 1, "name": "laptops"}, …]`: antes el frontend llevaba la lista
+escrita a mano y ahora la pide. Añade una fila a `categories` y aparecerá un botón más en la pantalla sin
+tocar una línea de código.
+
+```bash
+curl -s "http://localhost:8000/categories"
+```
+
 ## Checkpoints
 
 | Tag | Revisión Alembic | Qué se enseña | Estado |
@@ -46,6 +92,7 @@ cd frontend && npm install && npm run dev
 | `chkp1-catalog` | `001_products` | Una tabla bien hecha, un endpoint paginado, un listado que carga más al hacer scroll | hecho |
 | `chkp2-frontend` | `001_products` | Una frontend básico para ver todos los productos del catálogo para cada categoria | hecho |
 | `chkp3-custom-images` | `001b_product_images` | Se cambian las fotos a unas que no son de stock | hecho |
+| `chkp4-separate-category` | `001c_categories_expand` y `001d_categories_contract` | Las categorías en su propia tabla, en dos migraciones (EXPAND-CONTRACT), y cada una con su log | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -181,6 +228,20 @@ por quien programa, en lugar de cada vez que alguien le pregunta algo a los logs
 Los nombres son los de **ECS** (`http.response.status_code`, `url.path`,
 `event.duration_ms`), el vocabulario de Elastic, para que Kibana sepa qué son sin configurar
 nada.
+
+### Qué cuenta la tienda, además de HTTP
+
+El middleware escribe una línea por petición (`GET /products 200`), que habla del servidor.
+Las rutas escriben otra que habla del negocio, con sus campos bajo `shop.` porque ECS no
+tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
+
+| `event.action` | Nivel | Cuándo | Campos |
+|---|---|---|---|
+| `catalogue.list` | info | `GET /products` | `shop.category`, `shop.products_returned`, `shop.product_ids`, `shop.cursor`, `shop.has_next_page` |
+| `product.view` | info | `GET /products/{id}` | `shop.product_id`, `shop.product_name`, `shop.category`, `shop.price_cents`, `shop.stock` |
+| `product.miss` | warning | `GET /products/{id}` que no existe | `shop.product_id` |
+| `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
+| `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |
 
 ### Dos streams, dos audiencias
 
