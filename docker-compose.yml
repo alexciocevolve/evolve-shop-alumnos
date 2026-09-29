@@ -52,13 +52,37 @@ services:
       # Qué páginas pueden llamar a la API. Sale de .env (o del terminal); si no está, el
       # servidor de Vite de este mismo compose.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-      IMAGES_DIR: /app/images
+      IMAGES_DIR: /app/images # where the volume below is mounted; the API serves it at /images
+      # The Stripe key, passed THROUGH from .env and never written here: this file is in
+      # Git and that one is not. The `:?` makes compose refuse to start with a readable
+      # message instead of handing the container an empty key and letting it discover the
+      # problem at the first payment.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY missing in .env}
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_healthy # do not start (and migrate) until PostgreSQL accepts connections
+    # MEASURED, after the shop looked busy while doing nothing. The old version of this
+    # block ran `python -c "import urllib.request; ..."` every 5 seconds, and inside this
+    # image that costs 178 ms - against 11 ms to start the interpreter alone. Almost all
+    # of it is importing urllib. 178 ms every 5 s is 3.6% of a core burned forever by the
+    # one thing in the container that produces nothing.
+    #
+    # It also hides well: py-spy finds no busy thread, because the work is not in uvicorn
+    # at all - it is a brand new process, every five seconds. `docker compose stats` is
+    # what shows it, as a spike to ~20% between long stretches of 0.15%.
+    #
+    # Two changes, and the second is the one that matters:
+    #   · http.client instead of urllib.request - same check, 138 ms instead of 178 ms.
+    #     Worth taking, but it is only 22%: the interpreter is the expensive part, not the
+    #     library.
+    #   · interval 5s -> 30s, with start_interval keeping the checks fast only while the
+    #     container is still starting. That is what `docker compose up --wait` needs to
+    #     return quickly, and it is exactly what start_interval exists for.
+    # Together: from ~3.6% of a core to ~0.5%, with the same check.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-      interval: 5s
+      test: ["CMD", "python", "-c", "import http.client as h; c=h.HTTPConnection('127.0.0.1',8000,timeout=3); c.request('GET','/health'); exit(0 if c.getresponse().status==200 else 1)"]
+      interval: 30s
+      start_interval: 2s # while still starting: quick, so `up --wait` is not slow
       timeout: 3s
       retries: 10
       start_period: 15s # la migración corre antes de que arranque el servidor
@@ -66,6 +90,44 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data/images:/app/images:ro
+
+  # A toolbox for looking INSIDE the backend while it runs. It is not part of the shop and
+  # it does not start with it:
+  #
+  #     docker compose --profile debug up -d debug
+  #     docker compose exec debug htop            # processes and threads, live
+  #     docker compose exec debug py-spy top --pid 1   # the same, but per PYTHON function
+  #     docker compose --profile debug down       # and gone
+  #
+  # Why a container of its own instead of installing htop in the backend image: because the
+  # backend image is the one that gets deployed, and every tool added to it is weight and
+  # surface area that travels to production forever to be used twice. This one exists only
+  # while it is asked for.
+  #
+  # The trick that makes it work is `pid: service:backend`: the two containers SHARE A
+  # PROCESS NAMESPACE, so htop in here lists uvicorn out there and can measure it. Without
+  # that line this container would only ever see itself.
+  #
+  # py-spy is the one that actually answers "which thread is burning CPU" for a Python
+  # process: htop says "uvicorn, 100%", py-spy says which function. It needs SYS_PTRACE to
+  # read another process's memory, which is exactly the permission a debugger needs and
+  # exactly why it is not granted by default.
+  debug:
+    profiles: [debug]
+    image: python:3.12-slim
+    pid: "service:backend"
+    cap_add: [SYS_PTRACE]
+    # All the lines below are indented THE SAME. A YAML folded block (>) only joins lines
+    # with a space while they share an indentation; indent one further and YAML keeps the
+    # newline, sh sees a line starting with `&&`, and it dies with "Syntax error: &&
+    # unexpected" after having installed everything. Cost: one confused minute.
+    command: >
+      sh -c "apt-get update -qq
+      && apt-get install -y -qq --no-install-recommends htop procps
+      && pip install --no-cache-dir -q py-spy
+      && echo 'READY - try: docker compose exec debug htop'
+      && sleep infinity"
+    depends_on: [backend]
 
   frontend:
     build: ./frontend

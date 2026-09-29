@@ -79,7 +79,7 @@ jobs:
           test config --strict.perms=false
 
   frontend:
-    name: Frontend (33 tests)
+    name: Frontend (34 tests)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -108,7 +108,7 @@ jobs:
         run: npm run build
 
   backend:
-    name: Backend (154 tests)
+    name: Backend (166 tests)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -138,6 +138,15 @@ jobs:
       # conftest.py derives two more from this one: shop_test, which it builds by running
       # the migrations, and the `postgres` database it connects to in order to create them.
       DATABASE_URL: postgresql+psycopg://shop:shop@localhost:5432/shop
+      # A key-SHAPED string, not a key. app/config.py requires the variable to exist, and
+      # the tests never reach Stripe: they replace the gateway with a function of their own.
+      #
+      # Not because CI cannot reach the internet - it can, and an earlier version of this
+      # comment said otherwise, wrongly. The reasons are better than that: a test that
+      # calls Stripe is testing Stripe's uptime, goes red when somebody else has a bad day,
+      # and CANNOT make a card be refused on demand. And a real key in a public build log
+      # is a leaked secret, whatever its prefix says.
+      STRIPE_SECRET_KEY: sk_test_ci_never_calls_stripe
 
     steps:
       - uses: actions/checkout@v7
@@ -152,9 +161,10 @@ jobs:
 
       - run: pip install -r requirements-dev.txt
 
-      # 154 tests: services, HTTP routes, the two-buyer race, every migration up and down
-      # again, the schema-drift check, the committed OpenAPI contract and what the logs
-      # are allowed to say.
+      # 166 tests: services, HTTP routes, the two-buyer race, every migration up and down
+      # again, the schema-drift check, the committed OpenAPI contract, what the logs are
+      # allowed to say - and, since the shop started charging, a gateway that is stood in
+      # for rather than called.
       - run: python -m pytest
 
   e2e:
@@ -168,6 +178,14 @@ jobs:
       # docker-compose.yml refuses to start without this one, on purpose: a database
       # password should never have a default that works.
       POSTGRES_PASSWORD: shop
+      # Same story, and compose refuses to start without it too: the container will not
+      # boot without a key, and these tests need the shop running.
+      #
+      # It is a fake one, so the four tests that actually BUY something skip themselves -
+      # e2e/conftest.py says why, in the shopper fixture. To run them for real, put a
+      # Stripe TEST key in the repository secrets and read it here instead. Everything
+      # that does not involve paying keeps running either way.
+      STRIPE_SECRET_KEY: sk_test_ci_never_calls_stripe
       # The e2e tests speak to the shop over HTTP and to the database over SQL, and they
       # import nothing from the application. This is the SQL half.
       DATABASE_URL: postgresql+psycopg://shop:shop@localhost:5432/shop
@@ -201,7 +219,7 @@ jobs:
 
       # These are the only tests that can see a shop that is misconfigured rather than
       # miswritten: migrations that never ran, CORS naming the wrong address, images that
-      # nobody mounted. With CORS pointed elsewhere the other 187 stay green and two of
+      # nobody mounted. With CORS pointed elsewhere the other 200 stay green and two of
       # these fail.
       - name: Run the end-to-end tests
         working-directory: e2e

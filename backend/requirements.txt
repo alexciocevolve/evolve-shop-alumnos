@@ -8,3 +8,7 @@ alembic-utils==0.8.8
 psycopg[binary]==3.3.6
 pydantic[email]==2.13.5
 python-dotenv==1.2.3
+# The payment gateway. Only app/payments.py is allowed to import this: everything else
+# talks to the shop's own two functions, so the tests can replace the whole gateway
+# without a network and without knowing what Stripe's objects look like.
+stripe==15.6.1

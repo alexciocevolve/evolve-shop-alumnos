@@ -7,7 +7,11 @@ request bodies, which is exactly where they slip into a log by accident.
 
 import json
 
+import pytest
 from sqlalchemy import text
+
+from app import payments
+from app.main import app
 
 LAPTOP = 1
 
@@ -117,3 +121,72 @@ def test_a_healthy_health_check_leaves_no_line(client, shop_logs):
     paths = [line.get("url.path") for line in shop_logs()]
     assert "/health" not in paths
     assert "/categories" in paths
+
+
+def test_a_payment_is_logged_with_stripes_reference_and_how_long_it_took(
+    client, auth, user, shipping_address, shop_logs
+):
+    order = client.post("/orders", headers={**filled_cart(client), **auth}).json()
+
+    [charge] = shop_logs("payment.charge")
+    assert charge["event.outcome"] == "success"
+    assert charge["shop.order_id"] == order["id"]
+    assert charge["shop.payment_intent_id"].startswith("pi_")
+    assert charge["shop.charged_cents"] == charge["shop.amount_cents"] == order["total_cents"]
+    assert isinstance(charge["event.duration_ms"], float)
+    # The order line carries the same reference, so either one leads to the payment.
+    [placed] = [line for line in shop_logs("order.create") if line["event.outcome"] == "success"]
+    assert placed["shop.payment_intent_id"] == charge["shop.payment_intent_id"]
+    assert user.email not in json.dumps(shop_logs())
+
+
+def test_a_refused_card_is_logged_twice_once_as_payment_and_once_as_order(
+    client, auth, shipping_address, declining_pay, shop_logs
+):
+    app.dependency_overrides[payments.get_gateway] = lambda: declining_pay
+
+    assert client.post("/orders", headers={**filled_cart(client), **auth}).status_code == 402
+
+    [charge] = shop_logs("payment.charge")
+    assert charge["event.reason"] == "declined"
+    assert charge["log.level"] == "warning"
+    assert charge["error.message"] == "Your card has insufficient funds."
+    [refused] = [line for line in shop_logs("order.create") if line["event.outcome"] == "failure"]
+    assert refused["event.reason"] == "payment_declined"
+
+
+def test_a_gateway_that_breaks_is_an_error_with_an_unknown_outcome(
+    client, auth, shipping_address, shop_logs
+):
+    def broken_gateway(**asked):
+        raise ConnectionError("Stripe did not answer")
+
+    app.dependency_overrides[payments.get_gateway] = lambda: broken_gateway
+
+    with pytest.raises(ConnectionError):
+        client.post("/orders", headers={**filled_cart(client), **auth})
+
+    # Not "declined": nobody knows whether the card was charged, and the line says so.
+    [charge] = shop_logs("payment.charge")
+    assert charge["log.level"] == "error"
+    assert charge["event.outcome"] == "unknown"
+    assert charge["error.type"] == "ConnectionError"
+
+
+def test_money_taken_with_no_order_saved_leaves_the_line_needed_to_refund_it(
+    client, db, auth, shipping_address, monkeypatch, shop_logs
+):
+    # The commit after a successful charge fails: Stripe has the money, the shop has no
+    # order. The service's own comment says this can happen; this is what it looks like.
+    def commit_that_fails():
+        raise RuntimeError("the database went away")
+
+    cart = filled_cart(client)
+    monkeypatch.setattr(db, "commit", commit_that_fails)
+    with pytest.raises(RuntimeError):
+        client.post("/orders", headers={**cart, **auth})
+
+    [orphan] = shop_logs("payment.orphaned")
+    assert orphan["log.level"] == "critical"
+    assert orphan["shop.payment_intent_id"].startswith("pi_")
+    assert orphan["shop.charged_cents"] > 0

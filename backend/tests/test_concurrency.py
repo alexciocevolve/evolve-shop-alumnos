@@ -120,12 +120,17 @@ def both_read_before_either_writes(engine, committed_world):
     event.remove(engine, "before_cursor_execute", wait_for_the_other_buyer)
 
 
-def checkout(engine, user_id: int, token: str) -> str:
-    """Run one whole checkout in its own session, and report what happened."""
+def checkout(engine, user_id: int, token: str, pay) -> str:
+    """Run one whole checkout in its own session, and report what happened.
+
+    `pay` is passed in rather than taken from a fixture because this runs in a thread of
+    its own, with its own session, on purpose: two real connections are the only way to
+    make two transactions collide. Fixtures belong to the test's thread, not to these.
+    """
     with Session(engine) as session:
         try:
             services.create_order(
-                session, services.get_cart(session, token), session.get(User, user_id)
+                session, services.get_cart(session, token), session.get(User, user_id), pay
             )
             return "sold"
         except ValueError:
@@ -133,14 +138,14 @@ def checkout(engine, user_id: int, token: str) -> str:
 
 
 def test_two_buyers_and_one_unit_means_one_sale(
-    committed_world, both_read_before_either_writes, engine
+    committed_world, both_read_before_either_writes, engine, pay
 ):
     user_id, product_id, tokens = committed_world
 
     # Both start before either finishes. SELECT ... FOR UPDATE makes the second wait on
     # the first; when it wakes up it re-reads the row under the lock and sees no stock.
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = sorted(pool.map(lambda t: checkout(engine, user_id, t), tokens))
+        results = sorted(pool.map(lambda t: checkout(engine, user_id, t, pay), tokens))
 
     assert results == ["refused", "sold"], f"both buyers got through: {results}"
 

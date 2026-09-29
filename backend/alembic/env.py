@@ -106,6 +106,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():
@@ -130,6 +131,20 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,  # also detect column type changes, not only added/removed columns
+            # And default changes. Off by default, and the third thing in this project that
+            # --autogenerate could not see: first triggers (004a, fixed with alembic_utils),
+            # then entities in the drift test (include_schemas), now defaults.
+            #
+            # Found by accident: changing orders.status from "paid" to "pending_payment"
+            # produced an EMPTY migration, and the drift test stayed green while the model
+            # and the database disagreed. That particular change was then postponed - it
+            # belongs to the phase that introduces the state machine, not to the one that
+            # only makes "paid" true - but the hole it exposed is real and is closed here.
+            #
+            # It has a reputation for false positives, because it compares the rendered SQL
+            # of each default and `now()` does not always render the same way. Measured on
+            # this schema before switching it on: the only differences it found were real.
+            compare_server_default=True,
         )
 
         with context.begin_transaction():

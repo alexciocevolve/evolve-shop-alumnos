@@ -93,6 +93,21 @@ services:
       - key: CORS_ORIGINS
         sync: false
 
+      # The Stripe secret key. app/config.py reads it with [] on purpose, so without this
+      # line the API does not start at all: it dies at import with a KeyError, and Render
+      # keeps the old version running and reports a failed deploy.
+      #
+      # sync: false again, but for a different reason than CORS_ORIGINS. That one is not
+      # known yet; this one is known and SECRET. Render asks for it when the Blueprint is
+      # created and keeps it in its own secret store. The value is never written in this
+      # file: this file is in Git, and a key in a commit is a leaked key, however many
+      # commits later it is deleted.
+      #
+      # For the course, a TEST key (sk_test_...), the same one as in .env. A live key moves
+      # real money and belongs only to a shop that sells things for real.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+
       # Written into every log line as service.environment. Here there is no Filebeat: Render
       # reads the container's stdout itself and shows it under Logs in the dashboard, and
       # the shop does not need to know, because it only ever writes to stdout. That is the

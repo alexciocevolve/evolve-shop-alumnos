@@ -55,6 +55,11 @@ def test_the_order_carries_the_buyer_and_the_address(client, auth, shipping_addr
     body = client.post("/orders", headers={**cart, **auth}).json()
 
     assert body["customer_email"] == user.email
+    # This line did not change in objective 16, and that is the whole point of it. Since
+    # the first commit of the shop it asserted "paid" on an order nobody had paid for -
+    # phase 0 found it pinning a lie. Now a card is charged before the transaction commits,
+    # so the word is finally true and the test never had to move. What changed is the
+    # meaning, not the code, which is the most honest kind of progress there is.
     assert body["status"] == "paid"
     assert body["shipping_address"]["street"] == "Calle Mayor 1"
     assert body["shipping_address"]["kind"] == "shipping"
@@ -128,3 +133,26 @@ def test_the_whole_journey_from_an_empty_shop_to_a_confirmed_order(client, auth,
 
     assert order["total_cents"] == before["total_cents"]
     assert [i["product_id"] for i in order["items"]] == [LAPTOP]
+
+
+def test_a_refused_card_answers_402_and_creates_nothing(client, auth, shipping_address, declining_pay):
+    """A decline is its own answer, not a generic "no"."""
+    from app import payments
+    from app.main import app
+
+    # The client fixture installs a gateway that always agrees; this swaps it for one that
+    # refuses. Same seam, opposite answer - which is the argument for the seam existing.
+    app.dependency_overrides[payments.get_gateway] = lambda: declining_pay
+
+    cart = filled_cart(client)
+    response = client.post("/orders", headers={**cart, **auth})
+
+    # 402 and not 409: a client that wants to offer another card can tell from the number
+    # alone, without reading English. A 409 from this endpoint could equally be an empty
+    # cart, a line short of stock or a missing address.
+    assert response.status_code == 402
+    # Stripe's own wording, which is already written for a person.
+    assert "insufficient funds" in response.json()["detail"].lower()
+    # And nothing survived: no order, and the cart is still there to try again with.
+    assert client.get("/orders", headers=auth).json() == []
+    assert client.get("/cart", headers=cart).status_code == 200

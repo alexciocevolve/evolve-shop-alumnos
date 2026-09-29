@@ -39,6 +39,43 @@ Frontend, en `http://localhost:5173`:
 cd frontend && npm install && npm run dev
 ```
 
+#### Si algo consume CPU y no se sabe qué
+
+Lo primero, sin instalar nada, es ver el reparto por contenedor:
+
+```bash
+docker compose stats
+```
+
+Si el culpable es el backend, hace falta mirar **dentro** del proceso. La imagen del backend
+es deliberadamente mínima (no lleva ni `ps`, porque es la que se despliega), así que las
+herramientas viven en un contenedor aparte que solo existe cuando se pide:
+
+```bash
+docker compose --profile debug up -d debug
+```
+
+```bash
+docker compose exec debug sh -c 'py-spy dump --pid $(pgrep -x uvicorn)'
+```
+
+(El PID 1 **no** es uvicorn, es el `sh` que lanza las migraciones y luego el servidor; y
+`pgrep -f uvicorn` tampoco vale, porque también caza a ese `sh`, cuya línea de comandos
+contiene la palabra. De ahí el `-x`, que compara el nombre del proceso y no la línea.)
+
+`py-spy` es el que responde de verdad a «qué hilo está quemando CPU» en un proceso Python:
+`htop` dice *uvicorn, 100%*, y `py-spy` dice **en qué función**. También hay `htop` dentro
+(`docker compose exec debug htop`) para la vista de siempre. El contenedor comparte el
+espacio de procesos del backend, por eso ve sus hilos; y se lleva `SYS_PTRACE`, que es el
+permiso que necesita un depurador para leer la memoria de otro proceso.
+
+Cuando termines: `docker compose --profile debug down`.
+
+Los logs y estas herramientas contestan preguntas distintas: los logs dicen **qué ha pasado** (una
+petición, un pedido, un cobro), y `stats` y `py-spy` dicen **en qué se está gastando el tiempo ahora
+mismo**. Por eso el healthcheck del backend se cazó con `docker compose stats` y no en Kibana: gastaba
+CPU cada 5 segundos sin escribir ni una línea.
+
 ## Las categorías, en su propia tabla (EXPAND-CONTRACT)
 
 Al principio la categoría era una columna de texto en `products`: el nombre `'laptops'` repetido en ocho
@@ -84,6 +121,47 @@ tocar una línea de código.
 ```bash
 curl -s "http://localhost:8000/categories"
 ```
+
+## Cobrar con Stripe (fase 1: el pedido se cobra antes de existir)
+
+Desde este checkpoint, `POST /orders` **cobra** antes de guardar el pedido, con una tarjeta de prueba de
+Stripe. Hace falta una clave de prueba en `.env` (`STRIPE_SECRET_KEY=sk_test_...`, ver `.env.example`); sin
+ella la API no arranca, a propósito. Una clave `sk_test_` no cobra a nadie.
+
+Todo lo que sabe de Stripe está en [`backend/app/payments.py`](backend/app/payments.py). El resto de la
+tienda pide un cobro y recibe un `Charge` o un `PaymentDeclined`, y los tests sustituyen la pasarela entera
+por una función: ninguno llama a Stripe.
+
+El cobro va **dentro** de la transacción del pedido, y eso tiene dos consecuencias que el código no
+esconde: mientras Stripe contesta, los productos del pedido están bloqueados para todos los demás; y si el
+proceso muere entre el cobro y el `commit`, Stripe tiene el dinero y la tienda no tiene el pedido.
+
+### Lo que cuentan los logs de un cobro
+
+Aquí los logs dejan de ser una comodidad. Cada cobro escribe una línea `payment.charge`, y de lo que
+dice depende qué hay que hacer:
+
+| `event.outcome` | Nivel | Qué significa | Qué hacer |
+|---|---|---|---|
+| `success` | info | Cobrado. Lleva `shop.payment_intent_id` | Nada |
+| `failure` (`event.reason: declined`) | warning | La tarjeta dijo que no. No se ha cobrado nada | Nada: el cliente ya lo sabe (`402`) |
+| `unknown` (`event.reason: gateway_error`) | **error** | Stripe no contestó o falló. **Puede que sí se haya cobrado** | Buscar el `shop.order_id` en el panel de Stripe antes de decirle nada al cliente |
+
+Y hay una cuarta línea que ojalá no aparezca nunca: **`payment.orphaned`**, nivel `critical`. Sale cuando el
+cobro ha ido bien y después el pedido no se ha podido guardar. Stripe tiene el dinero y la tienda no tiene
+pedido. Esa línea es entonces **el único registro de que alguien ha pagado**, y lleva justo lo necesario
+para encontrar el pago y devolverlo: `shop.payment_intent_id`, el importe y el `user.id`. Hay un test que la
+provoca haciendo fallar el `commit` justo después de cobrar.
+
+Tres detalles de estas líneas:
+
+- **`event.duration_ms` es lo que tardó Stripe**, no la petición entera. Como los productos están
+  bloqueados mientras tanto, ese número es también cuánto ha esperado cualquier otro comprador de esos
+  productos. Medido con la clave de prueba desde clase: entre 0,7 y 1,2 segundos por cobro.
+- **`shop.payment_intent_id` no es un secreto**: sin la clave no sirve para nada, y es exactamente lo que
+  se escribe en el buscador del panel de Stripe para encontrar el pago.
+- **Nunca aparecen** la clave de Stripe, el correo del cliente ni nada de la tarjeta. La tarjeta ni
+  siquiera pasa por la tienda: la tiene Stripe, que es la razón de usar Stripe.
 
 ## Integración continua
 
@@ -138,9 +216,12 @@ la primera lección de sacar de un portátil algo que allí eran tres contenedor
 | `tienda-api` | Un proceso que escucha en un puerto | Se duerme a los 15 min sin tráfico |
 | `tienda-web` | **Una carpeta de ficheros.** Tras `vite build` no hay proceso | — |
 
-Se despliega con **New → Blueprint** en Render, apuntando a este repositorio. Pide dos valores que no
-se pueden deducir solos (`CORS_ORIGINS` y `VITE_API_URL`), porque cada servicio necesita la URL del
-otro y esas URLs no existen hasta que se crean los servicios.
+Se despliega con **New → Blueprint** en Render, apuntando a este repositorio. Pide tres valores que no
+están escritos en el fichero. Dos no se pueden deducir solos (`CORS_ORIGINS` y `VITE_API_URL`), porque
+cada servicio necesita la URL del otro y esas URLs no existen hasta que se crean los servicios. El
+tercero es la clave de Stripe (`STRIPE_SECRET_KEY`), que sí se conoce pero es **secreta**: se teclea en
+Render, que la guarda aparte, y no aparece nunca en `render.yaml` ni en ningún commit. Sin ella la API
+no arranca, igual que en local sin el `.env`. Para el curso vale la misma clave de prueba (`sk_test_`).
 
 **Ojo con `VITE_API_URL`:** Vite la **incrusta en el JavaScript al construir**. Cambiarla en el panel
 no hace nada hasta que el sitio se **vuelve a construir**. Configuración de construcción y
@@ -431,6 +512,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp22-deploy-render` | `004a_price_trigger` | La tienda descrita para Render en `render.yaml`; allí los logs los recoge Render, no Filebeat | hecho |
 | `chkp23-deploy-render-same-region` | `004a_price_trigger` | La base de datos y la API en la misma región, y la tienda diciendo al arrancar si llega a su base de datos | hecho |
 | `chkp24-ask-user-feedback` | `004a_price_trigger` | La gráfica rehecha tras enseñarla: el precio más bajo y el más alto marcados; la regla de «sin clases» deja de saltar con prosa | hecho |
+| `chkp25-pay-sync` | `005_payment` | Stripe, fase 1: el pedido se cobra antes de existir, y cada cobro deja una línea que dice qué hacer | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -700,7 +782,6 @@ Un pedido pertenece a alguien y solo esa persona puede verlo. Los pedidos aparec
 
 Se dejan fuera a propósito (no se implementan):
 
-- Pasarela de pago (un pedido nace ya en estado `paid`)
 - Roles y permisos
 - Imágenes de producción (los contenedores de la aplicación arrancan los servidores de desarrollo)
 
@@ -783,7 +864,9 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |
 | `cart.item.set` | info / warning | `PUT /cart/items/{id}`, bien (`success`) o sin stock (`failure`) | `shop.product_id`, `shop.quantity`, `error.message` si falla, y el resumen del carrito |
 | `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
-| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `user.id`, `error.message` si falla |
+| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `shop.payment_intent_id`, `user.id`; `event.reason: payment_declined` y `error.message` si la tarjeta dice que no |
+| `payment.charge` | info / warning / error | El cobro en Stripe, dentro de `POST /orders` (ver [Cobrar con Stripe](#cobrar-con-stripe-fase-1-el-pedido-se-cobra-antes-de-existir)) | `shop.order_id`, `user.id`, `shop.amount_cents`, `shop.charged_cents`, `shop.payment_intent_id`, `event.duration_ms`, `event.reason` |
+| `payment.orphaned` | critical | Cobrado, pero el pedido no se pudo guardar | `shop.payment_intent_id`, `shop.charged_cents`, `shop.order_id`, `user.id` |
 | `order.list` | info | `GET /orders`, los pedidos de quien pregunta | `user.id`, `shop.orders_returned` |
 | `order.miss` | warning | `GET /orders/{id}` que no existe o que es de otra persona | `user.id`, `shop.order_id` |
 | `user.register` | info / warning | `POST /users`, hecho o con el correo ya registrado | `user.id` si sale bien, `event.reason: email_taken` si no |

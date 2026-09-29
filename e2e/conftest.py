@@ -123,7 +123,25 @@ def product(database):
 
 @pytest.fixture
 def shopper(api, database, product):
-    """A customer of this test's own, registered through the API like anybody else."""
+    """A customer of this test's own, registered through the API like anybody else.
+
+    Every test that asks for a `shopper` goes on to BUY something, so this is also where
+    the shop's newest requirement is checked: since the shop started charging, placing an
+    order needs a Stripe test key that actually works. Without one the four buying tests
+    skip with a reason instead of failing with a 402 that looks like a bug in the shop.
+
+    The one order test that does NOT ask for a shopper is the one that checks a stranger
+    cannot buy: it expects a 401 and never reaches the gateway, so it keeps running.
+    """
+    key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not key.startswith("sk_test_") or "replace_me" in key or "ci_never" in key:
+        pytest.skip(
+            "These tests place a real order, and the shop cannot take one without a "
+            "working Stripe TEST key. Put one in .env as STRIPE_SECRET_KEY (get it with "
+            "`stripe sandbox create`) and restart the containers. A live key is never "
+            "needed here and must never be used."
+        )
+
     # A different email every run, so two runs in a row do not collide on the unique
     # constraint, and a leftover from a crashed run cannot be mistaken for this one.
     email = f"e2e-{secrets.token_hex(4)}@example.com"

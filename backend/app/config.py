@@ -29,6 +29,18 @@ def with_driver(url: str) -> str:
 
 DATABASE_URL = with_driver(os.environ["DATABASE_URL"])
 
+# The Stripe secret key. Required, and deliberately so: reading it with [] instead of
+# .get() means a shop with no way to charge refuses to start, loudly, at boot - instead
+# of starting fine and failing on the first customer who tries to pay.
+#
+# It is the same decision as DATABASE_URL above, and the same one session 23 teaches with
+# its pocket platform: a missing mandatory variable is a failed release, not a surprise
+# at three in the afternoon. The cost is that every place that runs this has to provide
+# it - .env here, compose, CI, and render.yaml - and that cost is the point.
+#
+# A test key (sk_test_...) charges nobody. Only sk_live_ moves money.
+STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
+
 # Origins whose pages may call this API from a browser: scheme + host + port, no path.
 # A comma-separated list, e.g. "https://shop.example.com,http://localhost:5173".
 # The default is the Vite dev server, so running locally needs no configuration.

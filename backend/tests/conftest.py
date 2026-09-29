@@ -30,13 +30,23 @@ TEST_URL = _url.set(database=TEST_DATABASE).render_as_string(hide_password=False
 ADMIN_URL = _url.set(database="postgres").render_as_string(hide_password=False)
 os.environ["DATABASE_URL"] = TEST_URL
 
+# app.config requires a Stripe key to exist, so one is put here rather than depending on
+# whatever .env happens to hold. It is a key-shaped string and nothing more: no test in
+# this folder ever reaches Stripe, because every one of them is handed the `pay` fixture
+# below instead of the real gateway. If a test ever DID reach out, this key would make it
+# fail loudly - which is the behaviour we want from an accident like that.
+#
+# Assigned and not setdefault: the day .env holds a REAL test key, these tests must still
+# be unable to charge anything by accident. Overwriting it is cheap insurance.
+os.environ["STRIPE_SECRET_KEY"] = "sk_test_the_backend_tests_never_call_stripe"
+
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from app import services  # noqa: E402
+from app import payments, services  # noqa: E402
 from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.observability import EcsFormatter  # noqa: E402
@@ -110,19 +120,25 @@ def count_queries(db):
 
 
 @pytest.fixture
-def client(db):
+def client(db, pay):
     """The whole application, driven over HTTP, but writing to the test's transaction.
 
     Overriding get_db is what joins the two: without it the app would open its own
     connection, its commits would be real, and one test's orders would turn up in the next.
     Everything else - the routes, the dependencies, the validation, the status codes - is
     the real thing.
+
+    The gateway is overridden the same way and for a stronger reason: without this line
+    every test that buys something would put a real charge through Stripe. It is the same
+    seam, used twice, which is the argument for having made the gateway a dependency at
+    all. A test that needs a refusal overrides it again with `declining_pay`.
     """
 
     def use_the_test_session():
         yield db
 
     app.dependency_overrides[get_db] = use_the_test_session
+    app.dependency_overrides[payments.get_gateway] = lambda: pay
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -185,3 +201,40 @@ def shipping_address(db, user):
 @pytest.fixture
 def cart(db):
     return services.create_cart(db)
+
+
+@pytest.fixture
+def pay():
+    """A payment gateway that always says yes, and keeps a note of what it was asked.
+
+    Every test that creates an order gets this instead of the real one. Not to go faster:
+    to make the tests SAY something. A test that talks to Stripe is testing Stripe's
+    availability, fails on a bad wifi, and cannot make a card be refused on demand.
+
+    `pay.calls` is the list of keyword arguments it received, which is how a test checks
+    that the amount and the description were built from the order and not from the client.
+    """
+
+    def gateway(**asked):
+        gateway.calls.append(asked)
+        # The id shape is Stripe's, so anything that parses it in future keeps working.
+        # The amount echoes back what was asked, exactly as a successful charge does.
+        return payments.Charge(
+            payment_intent_id=f"pi_test_{len(gateway.calls):04d}",
+            amount_cents=asked["amount_cents"],
+        )
+
+    gateway.calls = []
+    return gateway
+
+
+@pytest.fixture
+def declining_pay():
+    """A gateway that refuses, with the wording Stripe really uses for a spent card."""
+
+    def gateway(**asked):
+        gateway.calls.append(asked)
+        raise payments.PaymentDeclined("Your card has insufficient funds.")
+
+    gateway.calls = []
+    return gateway

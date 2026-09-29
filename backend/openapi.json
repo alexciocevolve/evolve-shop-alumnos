@@ -306,6 +306,16 @@
               }
             }
           },
+          "402": {
+            "description": "The card was refused. Nothing was charged and no order was created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            }
+          },
           "409": {
             "description": "The cart is empty, a line is short of stock, or the account has no shipping address yet",
             "content": {

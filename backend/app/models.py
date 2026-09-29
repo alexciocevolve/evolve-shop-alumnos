@@ -111,7 +111,18 @@ class Order(Base):
     # frozen the same way the price is. Changing the account email later must not rewrite
     # where this order was confirmed.
     customer_email: Mapped[str] = mapped_column(String(200))
+    # Still "paid", and still the default - but from objective 16 on it is TRUE. Creating the
+    # order and charging for it are once again the same act, because the charge is made and
+    # waited for inside this same transaction: if Stripe says no, the order never exists.
+    # That is what buys the right to keep this line, and what the next phase takes away.
     status: Mapped[str] = mapped_column(String(20), server_default="paid")
+    # The Stripe PaymentIntent that paid for this. Nullable because every order placed before
+    # there was a gateway has none, and this column is not rewriting history.
+    #
+    # One column, one payment - and that is exactly the bet that will be lost. A customer
+    # whose card is refused pays with another one, a second intent is created, and this column
+    # forgets the first. When that starts mattering it becomes a table of its own.
+    payment_intent_id: Mapped[str | None] = mapped_column(String(100))
     total_cents: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Which address this went to. Nullable, because an order placed without signing in

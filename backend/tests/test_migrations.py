@@ -106,9 +106,22 @@ def test_the_models_and_the_migrated_schema_say_the_same_thing(at_head):
     # the option set, this check now covers the function and the trigger registered in
     # env.py as well as the tables, so a trigger deleted straight from the database is a
     # failure here instead of the silence it used to be.
+    #
+    # compare_server_default arrived the same way, in 005. Changing the default of
+    # orders.status produced an EMPTY migration and this test stayed green, because neither
+    # was looking at defaults. That change was postponed to a later phase; the hole was not.
+    # The options here have to match the ones env.py uses, or this test watches less than
+    # --autogenerate writes, which is the worst of both worlds. It is famous for false
+    # positives on things like now(); measured on this schema first, and every difference
+    # it found was real.
     with at_head.connect() as connection:
         context = MigrationContext.configure(
-            connection, opts={"compare_type": True, "include_schemas": False}
+            connection,
+            opts={
+                "compare_type": True,
+                "include_schemas": False,
+                "compare_server_default": True,
+            },
         )
         differences = compare_metadata(context, Base.metadata)
 
