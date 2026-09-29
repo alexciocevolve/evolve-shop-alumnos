@@ -22,9 +22,3 @@ CORS_ORIGINS = [
 # Docker mounts that same folder somewhere else and sets IMAGES_DIR to say where.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 IMAGES_DIR = Path(os.environ.get("IMAGES_DIR", REPOSITORY_ROOT / "data" / "images"))
-
-# TEMPORARY: every order is placed for this same customer, because there are no users yet.
-# The next checkpoint adds registration and sign-in, and then the buyer comes from the
-# session instead. Keeping it here, with a name that says what it is, means there is one
-# obvious line to delete when that happens - instead of an address buried in the services.
-PLACEHOLDER_CUSTOMER_EMAIL = "customer@evolve-shop.example"

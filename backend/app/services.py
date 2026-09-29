@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.config import PLACEHOLDER_CUSTOMER_EMAIL
 from app.models import (
     Address,
     Cart,
@@ -123,14 +122,18 @@ def cart_total_cents(cart: Cart) -> int:
     return sum(item.product.price_cents * item.quantity for item in cart.items)
 
 
-def create_order(db: Session, cart: Cart, user: User | None = None) -> Order:
+def create_order(db: Session, cart: Cart, user: User) -> Order:
     # The whole checkout is ONE transaction: everything below happens, or nothing does.
     if not cart.items:
         raise ValueError("The cart is empty")
 
     # Where this is going. Read from the server, never sent by the browser: a client that
     # could name an address id would be a client that could name somebody else's.
-    shipping_address = get_active_address(db, user, is_billing=False) if user else None
+    shipping_address = get_active_address(db, user, is_billing=False)
+    if shipping_address is None:
+        # An order has to know where it goes. The screen says so before the button is
+        # pressed, and this is the check that holds whoever skips the screen.
+        raise ValueError("A shipping address is required before placing an order")
 
     # Lock the product rows until this transaction finishes, so that two people going for
     # the last unit at the same time cannot both pass the check below (session 14).
@@ -160,10 +163,14 @@ def create_order(db: Session, cart: Cart, user: User | None = None) -> Order:
 
     # Only now that every line is known to be servable.
     order = Order(
-        customer_email=PLACEHOLDER_CUSTOMER_EMAIL,
+        user_id=user.id,
+        # The email as it was on the day of the order, not a live reading of the account.
+        # Frozen for the same reason as the price and the address: changing the account
+        # email next year must not rewrite where this order was confirmed to.
+        customer_email=user.email,
         # The row, not a copy of its lines. Safe because the row will never change: the
         # order keeps the address it was sent to even after the person moves.
-        shipping_address_id=shipping_address.id if shipping_address else None,
+        shipping_address_id=shipping_address.id,
         # The total is added up here, on the server, from prices the server read itself.
         total_cents=sum(
             products[item.product_id].price_cents * item.quantity for item in cart.items
@@ -187,10 +194,26 @@ def create_order(db: Session, cart: Cart, user: User | None = None) -> Order:
     return order
 
 
-def get_order(db: Session, order_id: int) -> Order | None:
+def list_orders(db: Session, user: User) -> list[Order]:
+    return list(
+        db.scalars(
+            select(Order)
+            .where(Order.user_id == user.id)
+            .order_by(Order.id.desc())  # newest first: that is the one being looked for
+            .options(
+                selectinload(Order.items).joinedload(OrderItem.product),
+                joinedload(Order.shipping_address),
+            )
+        )
+    )
+
+
+def get_order(db: Session, order_id: int, user: User) -> Order | None:
+    # Whose it is belongs in the WHERE, not in an `if` afterwards. A query that can only
+    # return this person's orders cannot be made to return somebody else's by mistake.
     return db.scalars(
         select(Order)
-        .where(Order.id == order_id)
+        .where(Order.id == order_id, Order.user_id == user.id)
         .options(
             selectinload(Order.items).joinedload(OrderItem.product),
             joinedload(Order.shipping_address),

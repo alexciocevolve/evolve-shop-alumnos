@@ -7,7 +7,7 @@ from app.models import Cart, Order, User
 from app.observability import fingerprint, log
 from app.routes.cart import current_cart
 from app.routes.shared import address_to_dict
-from app.routes.users import optional_user
+from app.routes.users import current_user
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -38,26 +38,17 @@ def order_to_dict(order: Order) -> dict:
     }
 
 
-def buyer_fields(user: User | None) -> dict:
-    # Who bought: a signed-in user, by id, or a guest. With this, a dashboard can show how
-    # many orders come from people with an account, and how many of those have no
-    # shipping address yet.
-    if user is None:
-        return {"shop.guest": True}
-    return {"shop.guest": False, "user.id": user.id}
-
-
 @router.post("", status_code=201)
 def create_order(
     response: Response,
     cart: Cart = Depends(current_cart),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    # Still no request body. Prices, the total, the buyer and now the shipping address are
-    # all decided by the server: the browser says who it is with its token, and the server
-    # looks up the address itself. A client allowed to name an address id would be a
-    # client able to name somebody else's.
+    # Signing in is required: without a token this is a 401 and no order is created.
+    # There is still no request body. Prices, the total, the buyer and the shipping
+    # address are all decided by the server; the browser only says who it is, with its
+    # token. A client allowed to name an address id could name somebody else's.
     #
     # Worked out before the order is placed: placing it deletes the cart, and afterwards
     # there is no token left to take the fingerprint from. With it, the order can be
@@ -68,16 +59,17 @@ def create_order(
         order = services.create_order(db, cart, user)
     except ValueError as e:
         # This is where the race from session 14 shows up: two people pay for the last
-        # unit at the same time, one gets 201 and the other gets this line.
+        # unit at the same time, one gets 201 and the other gets this line. It is also
+        # where "no shipping address yet" ends up, for anybody who skips the screen.
         log.warning(
             "order refused",
             extra={
                 "event.action": "order.create",
                 "event.outcome": "failure",
                 "error.message": str(e),
+                "user.id": user.id,
                 "shop.cart_ref": cart_ref,
                 "shop.cart_lines": len(cart.items),
-                **buyer_fields(user),
             },
         )
         # An empty cart or a line short of stock: the request was understood and the rule
@@ -85,12 +77,14 @@ def create_order(
         raise HTTPException(409, str(e))
 
     # The sale itself. The customer's email stays out of the log on purpose: it is
-    # personal data, and the order id is enough to find everything else in the database.
+    # personal data, and user.id plus the order id are enough to find everything else in
+    # the database.
     log.info(
         f"order {order.id} placed",
         extra={
             "event.action": "order.create",
             "event.outcome": "success",
+            "user.id": user.id,
             "shop.order_id": order.id,
             "shop.cart_ref": cart_ref,
             "shop.order_total_cents": order.total_cents,
@@ -101,22 +95,41 @@ def create_order(
             # can be looked up in the database by whoever is allowed to; in the log it
             # tells nothing about where anybody lives.
             "shop.shipping_address_id": order.shipping_address_id,
-            **buyer_fields(user),
         },
     )
     response.headers["Location"] = f"/orders/{order.id}"
     return order_to_dict(order)
 
 
+@router.get("")
+def list_orders(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    orders = services.list_orders(db, user)
+    # How many orders the person has when they look at their account. Put next to
+    # order.create, it shows who comes back to check on an order after buying.
+    log.info(
+        f"user {user.id} listed their orders",
+        extra={"event.action": "order.list", "user.id": user.id, "shop.orders_returned": len(orders)},
+    )
+    return [order_to_dict(order) for order in orders]
+
+
 @router.get("/{order_id}")
-def get_order(order_id: int, db: Session = Depends(get_db)):
-    order = services.get_order(db, order_id)
+def get_order(
+    order_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    order = services.get_order(db, order_id, user)
     if order is None:
-        # For now any order can be read by its number, because there are no users yet.
-        # Somebody asking for 1, 2, 3, 4... one after another would show up here.
+        # The customer gets the same 404 for "no such order" and "not yours". The log can
+        # say more, because it knows who asked: one user.id asking for 1, 2, 3, 4... one
+        # after another is somebody trying to read other people's orders.
         log.warning(
             f"order {order_id} not found",
-            extra={"event.action": "order.miss", "shop.order_id": order_id},
+            extra={"event.action": "order.miss", "user.id": user.id, "shop.order_id": order_id},
         )
+        # 404 and not 403, and the same sentence for "no such order" and "not yours".
+        # A 403 would confirm that order 42 exists, which is enough to count the shop's
+        # orders by asking for one number after another.
         raise HTTPException(404, f"Order {order_id} not found")
     return order_to_dict(order)

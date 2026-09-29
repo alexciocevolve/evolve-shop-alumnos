@@ -88,9 +88,23 @@ class CartItem(Base):
 
 class Order(Base):
     __tablename__ = "orders"
-    __table_args__ = (CheckConstraint("total_cents >= 0", name="ck_orders_total_cents"),)
+    __table_args__ = (
+        CheckConstraint("total_cents >= 0", name="ck_orders_total_cents"),
+        # From now on an order belongs to somebody. The column is nullable and the rule is
+        # a CHECK instead, because orders placed before this rule existed have no owner and
+        # history cannot be rewritten: the migration adds this one NOT VALID, so it applies
+        # to every new order without failing on the old ones.
+        CheckConstraint("user_id IS NOT NULL", name="ck_orders_user_id_required"),
+    )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    # Who bought it. Nullable in the column only for the orders that came before.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", name="fk_orders_user_id"), index=True
+    )
+    # Kept even though the user is now known: it is the address the order was sent to,
+    # frozen the same way the price is. Changing the account email later must not rewrite
+    # where this order was confirmed.
     customer_email: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(20), server_default="paid")
     total_cents: Mapped[int]
@@ -108,6 +122,7 @@ class Order(Base):
     # is never changed: editing one writes a NEW row and retires the old one. Same lesson
     # as the price in order_items, reached a different way.
     shipping_address: Mapped["Address | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
 
 
 class OrderItem(Base):

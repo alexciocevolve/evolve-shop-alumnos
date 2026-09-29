@@ -120,9 +120,22 @@ export default function Cart() {
       )}
 
       <div className="checkout">
-        {/* There is still no email field: the buyer is decided by the server. */}
-        <p className="status">This order will be placed for the demo customer.</p>
-        <button type="button" className="primary" disabled={placing} onClick={submit}>
+        {/* Still no email field: who is buying comes from the token, and the server reads
+            the address itself. The button only stops the journey early - the API refuses
+            the same two cases with a 401 and a 409, whoever calls it. */}
+        <p className="status">
+          {!user
+            ? "Sign in to place this order."
+            : !shippingAddress
+              ? "Add a shipping address to place this order."
+              : `This order will be placed for ${user.email}.`}
+        </p>
+        <button
+          type="button"
+          className="primary"
+          disabled={placing || !user || !shippingAddress}
+          onClick={submit}
+        >
           {placing ? "Placing…" : "Place order"}
         </button>
       </div>

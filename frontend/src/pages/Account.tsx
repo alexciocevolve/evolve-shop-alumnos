@@ -1,6 +1,7 @@
 import { Navigate } from "react-router-dom";
 import type { AddressKind } from "../api";
 import AddressForm from "../components/AddressForm";
+import OrderList from "../components/OrderList";
 import { formatDate } from "../format";
 import { useSession } from "../session";
 
@@ -62,6 +63,9 @@ export default function Account() {
         Changing an address does not overwrite the old one: it is kept, retired, so that
         orders already placed still show the address they were actually sent to.
       </p>
+
+      <h3 className="orders-heading">Your orders</h3>
+      <OrderList />
     </div>
   );
 }

@@ -99,6 +99,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp8-address` | `003a_addresses` | Dirección de envío y de facturación, una de cada por persona, y en los logs solo el país | hecho |
 | `chkp9-update-address` | `003a_addresses` | La página *My account* para editar las dos direcciones | hecho |
 | `chkp10-show-address` | `003b_address_history` | El pedido recuerda a qué dirección se envió, porque las direcciones ya no se editan | hecho |
+| `chkp11-show-orders` | `003c_orders_user` | Sin sesión no se compra, cada pedido tiene dueño y solo él lo ve | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -308,7 +309,7 @@ puede modificar.
 16. Lo mismo en Kibana. El `order.create` lleva `shop.shipping_address_id`, y cada `user.address.save`
     lleva `shop.address_id` con el número de la fila nueva. Son el mismo número, así que se puede ver a
     qué dirección fue un pedido sin que la calle aparezca en ningún log. `order.create` lleva también
-    `user.id`, o `shop.guest: true` si se compró sin cuenta.
+    el `user.id` de quien compra.
 17. Lo que mantiene el orden es un **índice único parcial**: único sobre `(user_id, is_billing)` pero
     **solo** `WHERE is_active`. Cada persona tiene como mucho una de cada en uso y todas las retiradas que
     haga falta. Probar a meter una segunda activa a mano y ver cómo la base de datos la rechaza.
@@ -321,9 +322,48 @@ puede modificar.
     borra las retiradas primero **y dice que eso destruye información**, porque el esquema viejo no tiene
     dónde guardarla.
 
-> **El comprador todavía es el de prueba.** El pedido ya sabe a dónde va, pero `customer_email` sigue
-> siendo `PLACEHOLDER_CUSTOMER_EMAIL` y no hay `orders.user_id`. Enlazar el pedido con la persona es el
-> paso siguiente.
+### cp3 · No hay pedidos anónimos
+
+Un pedido pertenece a alguien y solo esa persona puede verlo. Los pedidos aparecen en *My account*.
+
+21. **Dos agujeros que se encontraron probando la API, no leyendo el código.** Antes de este paso,
+    `POST /orders` sin token respondía `201`, y peor: `GET /orders/5` **sin token** respondía `200` con el
+    correo y la calle del cliente. Cualquiera podía leer todos los pedidos de la tienda contando ids.
+    Ahora:
+
+    ```bash
+    curl -i -X POST http://localhost:8000/orders -H "X-Cart-Token: TOKEN"
+    ```
+
+    Responde `401`. Y el pedido de otra persona responde **`404`, no `403`**: un `403` confirmaría que el
+    pedido 42 existe, y eso basta para contar los pedidos del negocio.
+22. Pedir con la sesión propia un pedido que es de otra persona, y buscarlo en Kibana. El cliente recibe el
+    mismo `404` de siempre, pero el `order.miss` lleva el `user.id` de quien preguntó. Un mismo `user.id`
+    con muchos `order.miss` seguidos, cada uno con un `shop.order_id` distinto, es alguien intentando leer
+    pedidos ajenos. La respuesta no le dice nada, y el log lo cuenta todo.
+23. Un pedido sin dirección también se rechaza, con `409`: tiene que saber a dónde va. En la pantalla el
+    botón está deshabilitado antes de llegar ahí, pero la comprobación que manda es la del servidor. En los
+    logs sale como `order.create` con `event.outcome: failure` y el motivo en `error.message`.
+24. **Lo interesante de la revisión `003c` es lo que NO hace.** No pone `user_id` como `NOT NULL`, porque
+    los pedidos anteriores a esta regla no tienen dueño y las únicas salidas serían inventarle uno o
+    borrar pedidos de verdad. En su lugar añade la regla como `CHECK ... NOT VALID`:
+
+    ```sql
+    ALTER TABLE orders ADD CONSTRAINT ck_orders_user_id_required CHECK (user_id IS NOT NULL) NOT VALID;
+    ```
+
+    PostgreSQL la aplica a **todo lo que se escriba a partir de ahora** y no revisa las filas que ya
+    estaban. Es la misma técnica con la que se añade una restricción a una tabla enorme sin bloquearla
+    durante un recorrido completo; después, cuando las filas viejas están resueltas, se valida con una
+    línea: `VALIDATE CONSTRAINT`. Se puede ver funcionando:
+
+    ```bash
+    docker compose exec db psql -U shop -d shop -c "INSERT INTO orders (customer_email, total_cents) VALUES ('x@x.com', 100)"
+    ```
+
+25. `customer_email` se mantiene aunque ya se sepa quién compra: guarda el correo **del día del pedido**,
+    congelado como el precio y la dirección. Cambiar el correo de la cuenta el año que viene no debe
+    reescribir a dónde se confirmó un pedido antiguo.
 
 ## Fuera de alcance
 
@@ -412,8 +452,9 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |
 | `cart.item.set` | info / warning | `PUT /cart/items/{id}`, bien (`success`) o sin stock (`failure`) | `shop.product_id`, `shop.quantity`, `error.message` si falla, y el resumen del carrito |
 | `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
-| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `user.id` o `shop.guest`, `error.message` si falla |
-| `order.miss` | warning | `GET /orders/{id}` que no existe | `shop.order_id` |
+| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `user.id`, `error.message` si falla |
+| `order.list` | info | `GET /orders`, los pedidos de quien pregunta | `user.id`, `shop.orders_returned` |
+| `order.miss` | warning | `GET /orders/{id}` que no existe o que es de otra persona | `user.id`, `shop.order_id` |
 | `user.register` | info / warning | `POST /users`, hecho o con el correo ya registrado | `user.id` si sale bien, `event.reason: email_taken` si no |
 | `user.login` | info / warning | `POST /login`, dentro o fuera | `user.id` y `shop.session_ref` si entra; `event.reason` (`wrong_password` o `unknown_email`) y `user.id` o `shop.email_ref` si no |
 | `user.session` | info | Un token de sesión caducado o inventado (`401`) | `shop.session_ref` |

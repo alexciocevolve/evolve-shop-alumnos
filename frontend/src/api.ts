@@ -138,6 +138,9 @@ export const createOrder = () => request<Order>("/orders", { method: "POST" });
 
 export const getOrder = (id: number) => request<Order>(`/orders/${id}`);
 
+// Only ever your own: the server decides that from the token, not from anything sent here.
+export const listOrders = () => request<Order[]>("/orders");
+
 export type User = { id: number; email: string; full_name: string; created_at: string };
 
 // The password travels in the body of a POST, never in the address: a URL ends up in the
