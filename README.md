@@ -146,6 +146,31 @@ otro y esas URLs no existen hasta que se crean los servicios.
 no hace nada hasta que el sitio se **vuelve a construir**. Configuración de construcción y
 configuración de arranque se parecen mucho en un panel y no se comportan igual.
 
+**La base de datos y la API tienen que estar en la MISMA REGIÓN.** `fromDatabase` entrega la cadena de
+conexión **interna**, y cada región de Render tiene su propia red privada: si no coinciden, el backend
+no llega a la base de datos. Y no se arregla después: la región de un recurso **no se puede cambiar**,
+hay que borrarlo y crear otro. Por eso `region:` está escrito en los dos sitios del `render.yaml`:
+omitirlo en la base de datos la manda a Oregon por defecto.
+
+Y si hay que corregirlo, se recrea **el recurso que no guarda nada**: un servicio web se vuelve a construir
+desde el repositorio y no pierde nada; una base de datos, sí. Cambiar la región en el fichero no basta
+(*"changes to a Blueprint never cause a resource to be deleted"*): hay que **borrar el recurso** y
+volver a sincronizar el Blueprint, que es cuando Render lo crea de nuevo con la región nueva.
+
+Lo peor de ese fallo fue lo **callado** que era: la tienda arrancaba sin quejarse, `/health` decía «ok»
+(no toca la base de datos) y cada petición fallaba. Desde este checkpoint, al arrancar, la tienda prueba
+la base de datos una vez y lo dice en la segunda línea de su log:
+
+```text
+database reachable     destination.address: db   shop.database: shop
+database unreachable   destination.address: ...  error.message: ...
+```
+
+Con el host y el nombre de la base de datos, **nunca la URL entera**, que lleva la contraseña dentro. La
+prueba tiene un límite de 5 segundos: una dirección a la que nadie contesta no siempre responde «no», a
+veces se queda callada dos minutos, y mientras tanto la tienda no atendería a nadie. Tampoco impide
+arrancar: solo lo cuenta.
+
 Y cuatro cosas del código existen por esto:
 
 - **Las imágenes viajan dentro de la imagen de Docker** (`COPY data/images`), por lo que el backend se
@@ -404,6 +429,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp20-price-history-ui` | `004a_price_trigger` | El histórico dibujado como gráfica, con el eje recortado a la vista. Mismos datos, mismo log (`product.price_history`) | hecho |
 | `chkp21-deploy-pipeline` | `004a_price_trigger` | GitHub Actions ejecuta en cada push todo lo que se comprobaba a mano, incluida la configuración de Filebeat | hecho |
 | `chkp22-deploy-render` | `004a_price_trigger` | La tienda descrita para Render en `render.yaml`; allí los logs los recoge Render, no Filebeat | hecho |
+| `chkp23-deploy-render-same-region` | `004a_price_trigger` | La base de datos y la API en la misma región, y la tienda diciendo al arrancar si llega a su base de datos | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -750,6 +776,7 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `product.price_history` | info | `GET /products/{id}/price-history` | `shop.product_id`, `shop.price_changes_returned` |
 | `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
 | `startup` / `shutdown` | info | El servidor arranca / se para limpiamente | — |
+| `startup.database` | info / error | Al arrancar, si la base de datos contesta | `destination.address`, `shop.database`, `error.message` si falla |
 | `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |
 | `cart.create` | info | `POST /cart` | `shop.cart_ref` y el resumen del carrito |
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |

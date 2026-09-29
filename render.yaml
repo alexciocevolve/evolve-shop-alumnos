@@ -26,6 +26,23 @@
 databases:
   - name: tienda-db
     plan: free
+    # SAME REGION AS THE API, and this line is not optional however much it looks it.
+    #
+    # Leaving it out once already cost a broken deploy. Render defaults to Oregon, the API
+    # said frankfurt, and the two could not see each other at all: fromDatabase hands over
+    # the INTERNAL connection string, and that only works inside one region, because each
+    # region has a private network of its own. The shop came up and could not reach its
+    # database.
+    #
+    # What made it silent rather than loud is that omitting it does not fail. It defaults -
+    # and the default was a different continent.
+    #
+    # Both are oregon now because the database was already there and a database holds data,
+    # while a web service holds none: recreating the API costs nothing, recreating the
+    # database would have cost whatever was in it. Neither can simply be moved - "Render
+    # doesn't currently support changing the region for an existing service or database" -
+    # so the choice was which one to rebuild, and the answer is always the empty one.
+    region: oregon
     # The same major version as docker-compose.yml. A database that is one version ahead in
     # production is a difference nobody sees until the day it explains something.
     postgresMajorVersion: "16"
@@ -35,7 +52,9 @@ services:
     type: web
     runtime: docker
     plan: free
-    region: frankfurt
+    # Oregon, to sit beside the database. See the note on the database above for why this
+    # is not a preference: a different region is not slower, it is unreachable.
+    region: oregon
 
     # The context is the repository root, not backend/. That is what lets the image copy
     # data/images into itself - and it has to, because there is no bind mount here and the
