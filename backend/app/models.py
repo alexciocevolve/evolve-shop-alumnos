@@ -210,3 +210,36 @@ class Address(Base):
     postal_code: Mapped[str] = mapped_column(String(20))
     country: Mapped[str] = mapped_column(String(2), server_default="ES")  # ISO 3166-1
     user: Mapped["User"] = relationship(back_populates="addresses")
+
+
+class ProductPriceHistory(Base):
+    __tablename__ = "product_price_history"
+    __table_args__ = (
+        # Every question this table exists to answer is about ONE product over TIME, so the
+        # index covers both columns in that order: find the product, then read its rows
+        # already sorted. An index on product_id alone would still have to sort afterwards.
+        Index("ix_product_price_history_product", "product_id", "changed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    # ON DELETE CASCADE, which is a real decision and not a default: the history of a
+    # product that no longer exists cannot be read by anybody, because every route reaches
+    # it through the product. Keeping those rows would be keeping rubbish nobody can see.
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "products.id", ondelete="CASCADE", name="fk_product_price_history_product_id"
+        )
+    )
+    # A row is a TRANSITION, not a state: it holds the price before and the price after.
+    # Storing only the new price would need an invented first row for the price a product
+    # was born with, and then "the history is empty" and "it never changed" would look the
+    # same. Two columns make each row answer on its own: it went from this to that.
+    previous_price_cents: Mapped[int]
+    price_cents: Mapped[int]
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    product: Mapped["Product"] = relationship()
+
+    # NOTE: nothing writes to this table yet. The table comes first on its own so that the
+    # question of WHO fills it stays open and gets answered separately - which is the whole
+    # point of the checkpoint.

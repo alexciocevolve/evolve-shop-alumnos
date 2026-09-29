@@ -275,6 +275,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp13-backend-integration` | ninguna | Tests de la API, de la carrera por la última unidad, de las migraciones y de los logs que escriben las rutas | hecho |
 | `chkp14-frontend-tests` | ninguna | Tests del frontend sin red, incluido el aviso de producto abierto | hecho |
 | `chkp15-e2e-test` | ninguna | Tests de extremo a extremo por HTTP contra la tienda en marcha, y que los logs llegan a Elasticsearch sin secretos | hecho |
+| `chkp16-price-history` | `004_price_history` | La tabla del histórico de precios, vacía: todavía nada la rellena ni la lee, así que no hay nada que registrar | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
