@@ -1,0 +1,4 @@
+# Only needed to run the tests, never to run the shop.
+-r requirements.txt
+
+pytest==9.1.1

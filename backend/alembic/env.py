@@ -18,8 +18,12 @@ config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
+#
+# disable_existing_loggers=False: by default fileConfig switches off every logger that
+# already exists. When the migrations run in the same process as the shop (the tests do
+# exactly that), the "shop" logger would go silent from then on, with no error at all.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # The models are the source of truth: `--autogenerate` compares this metadata
 # with the real database and writes the difference as a migration.

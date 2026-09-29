@@ -85,6 +85,50 @@ tocar una línea de código.
 curl -s "http://localhost:8000/categories"
 ```
 
+## Tests
+
+Los tests del backend se ejecutan contra una base de datos **aparte**, `shop_test`, que se crea sola la
+primera vez y se construye **ejecutando las migraciones de verdad**. Nunca tocan la base de desarrollo,
+así que no pueden llevarse por delante los datos de la clase.
+
+```bash
+cd backend && .venv/Scripts/activate && pip install -r requirements-dev.txt && pytest
+```
+
+Cada test corre dentro de una transacción que se deshace al terminar, así que todos empiezan con los
+mismos 36 productos y sin usuarios. No hay que borrar nada a mano. Si tardan minutos en vez de segundos,
+revisa que `DATABASE_URL` en `.env` diga `127.0.0.1` y no `localhost` (ver `.env.example`).
+
+**Cómo saber si un test sirve para algo:** rompe a propósito la regla que vigila y comprueba que falla.
+
+| Rompe esto | Debe fallar |
+|---|---|
+| Quitar `joinedload(Product.category)` en `services.py` | El test que cuenta consultas (el N+1) |
+| Poner `price_cents=0` en el `OrderItem` en `services.py` | Los dos tests del precio congelado |
+| Quitar `Order.user_id == user.id` del `WHERE` en `services.py` | El test de que un pedido solo lo lee su dueño |
+| Hacer que `save_address` modifique la fila en `services.py` | Los tests del histórico de direcciones |
+| Añadir el `email` al log de login fallido en `services.py` | Los tests de `test_logs.py` que buscan datos personales |
+| Quitar `disable_existing_loggers=False` en `alembic/env.py` | Todos los tests de `test_logs.py`, porque la tienda se queda muda |
+
+Un test que no falla al romper lo que vigila no vigila nada.
+
+**Los logs también se prueban.** [`tests/test_logs.py`](backend/tests/test_logs.py) llama a los servicios y
+lee lo que han escrito, convertido en el mismo JSON que llega a Elasticsearch. Comprueba que un login
+fallido dice por qué y de quién, y sobre todo lo que **no** puede aparecer: ni la contraseña (la buena ni
+la mala), ni el token de sesión, ni el correo. Un log es una salida del programa como cualquier otra, y
+lo que no se prueba acaba cambiando sin que nadie se entere.
+
+Ese fichero encontró un fallo nada más escribirse. Los tests ejecutan las migraciones en el mismo proceso,
+y el `env.py` de Alembic llamaba a `fileConfig(...)`, que por defecto **apaga todos los loggers que ya
+existen**. A partir de ahí la tienda no escribía ni una línea, y ningún error lo avisaba. En producción no
+se nota, porque la migración corre en otro proceso antes de arrancar el servidor. Lo arregla
+`disable_existing_loggers=False`.
+
+> **Lo que todavía no está cubierto:** quitar `with_for_update()` de `create_order` **no** hace fallar
+> ningún test. Esa regla (dos compradores a por la última unidad) necesita dos transacciones reales
+> confirmadas, y eso no cabe en el truco de la transacción que se deshace. Está pendiente, junto con los
+> tests de las rutas HTTP (y de los logs que escriben ellas), los de migraciones y los del frontend.
+
 ## Checkpoints
 
 | Tag | Revisión Alembic | Qué se enseña | Estado |
@@ -100,6 +144,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp9-update-address` | `003a_addresses` | La página *My account* para editar las dos direcciones | hecho |
 | `chkp10-show-address` | `003b_address_history` | El pedido recuerda a qué dirección se envió, porque las direcciones ya no se editan | hecho |
 | `chkp11-show-orders` | `003c_orders_user` | Sin sesión no se compra, cada pedido tiene dueño y solo él lo ve | hecho |
+| `chkp12-backend-unittest` | ninguna | Tests de los servicios contra una base de datos de pruebas, y tests de lo que los logs no pueden contar | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -371,10 +416,8 @@ Se dejan fuera a propósito (no se implementan):
 
 - Pasarela de pago (un pedido nace ya en estado `paid`)
 - Roles y permisos
-- Docker para la aplicación (solo la base de datos va en Docker)
-- CI
-- Observabilidad
-- Tests automáticos
+- Imágenes de producción (los contenedores de la aplicación arrancan los servidores de desarrollo)
+- CI (los tests se ejecutan a mano antes de cada tag)
 
 ## Observabilidad: los logs, en un Elasticsearch que no es nuestro
 
