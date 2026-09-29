@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from app import services
 from app.db import get_db
-from app.models import Address, User
+from app.models import User
 from app.observability import fingerprint, log
+from app.routes.shared import address_to_dict
 from app.schemas import AddressIn, LoginIn, UserIn
 
 router = APIRouter(tags=["users"])
@@ -43,6 +44,21 @@ def current_user(
         )
         raise HTTPException(401, "Invalid or expired token")
     return user
+
+
+def optional_user(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """The signed-in user, or None for somebody buying without an account.
+
+    No header at all means a guest, which is allowed. A header that IS there and does not
+    work is a different thing: somebody tried to say who they were and failed, and
+    quietly serving them as a guest would hide an expired session instead of showing it.
+    """
+    if authorization is None:
+        return None
+    return current_user(authorization, db)
 
 
 def user_to_dict(user: User) -> dict:
@@ -107,21 +123,6 @@ def me(user: User = Depends(current_user)):
     return user_to_dict(user)
 
 
-def address_to_dict(address: Address) -> dict:
-    return {
-        "id": address.id,
-        # The API says "shipping" / "billing" rather than a true/false that the reader has
-        # to decode. The column is a boolean because two kinds is all there is; the answer
-        # is a word because that is what the screen and the address bar are made of.
-        "kind": "billing" if address.is_billing else "shipping",
-        "recipient_name": address.recipient_name,
-        "street": address.street,
-        "city": address.city,
-        "postal_code": address.postal_code,
-        "country": address.country,
-    }
-
-
 @router.get("/me/addresses")
 def list_addresses(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return [address_to_dict(a) for a in services.list_addresses(db, user)]
@@ -150,6 +151,10 @@ def save_address(
             "user.id": user.id,
             "shop.address_kind": kind,
             "shop.address_country": address.country,
+            # Saving always writes a NEW row, so this id is new every time. It is the same
+            # number an order stores in shipping_address_id, which is how the two lines are
+            # matched in Kibana.
+            "shop.address_id": address.id,
         },
     )
     return address_to_dict(address)
@@ -161,8 +166,12 @@ def delete_address(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    if not services.delete_address(db, user, kind == "billing"):
+    # The row is not removed, only retired: an order may point at it, and the foreign key
+    # is there to stop that order losing the address it was actually sent to.
+    if not services.deactivate_address(db, user, kind == "billing"):
         raise HTTPException(404, f"No {kind} address to delete")
+    # Still called "delete" because that is what the customer asked for, even though the
+    # row stays in the table, retired.
     log.info(
         f"{kind} address deleted",
         extra={"event.action": "user.address.delete", "user.id": user.id, "shop.address_kind": kind},

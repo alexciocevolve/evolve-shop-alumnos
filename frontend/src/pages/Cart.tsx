@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "../cart";
+import AddressLines from "../components/AddressLines";
 import { formatPrice } from "../format";
+import { useSession } from "../session";
 
 export default function Cart() {
   const { cart, setQuantity, removeItem, placeOrder } = useCart();
+  const { user, shippingAddress } = useSession();
   const [placing, setPlacing] = useState(false);
   const navigate = useNavigate();
 
@@ -90,9 +93,34 @@ export default function Cart() {
         </tfoot>
       </table>
 
+      {/* Who is buying decides what is shown here, and the server decides the same way:
+          it reads the address from the token, so nothing about it is sent from here. */}
+      {user ? (
+        <section className="shipping-to">
+          <h3>Shipping to</h3>
+          {shippingAddress ? (
+            <>
+              <AddressLines address={shippingAddress} />
+              <p className="field-hint">
+                <Link to="/account">Change it in your account</Link>. The order keeps the
+                address it was sent to, even if you move later.
+              </p>
+            </>
+          ) : (
+            <p className="status">
+              No shipping address yet. <Link to="/account">Add one in your account</Link>{" "}
+              so this order knows where to go.
+            </p>
+          )}
+        </section>
+      ) : (
+        <p className="status shipping-to">
+          <Link to="/auth">Sign in</Link> to send this order to your address.
+        </p>
+      )}
+
       <div className="checkout">
-        {/* No email field and no sign-in yet: every order goes to the same placeholder
-            customer, decided by the server. Registration comes in the next checkpoint. */}
+        {/* There is still no email field: the buyer is decided by the server. */}
         <p className="status">This order will be placed for the demo customer.</p>
         <button type="button" className="primary" disabled={placing} onClick={submit}>
           {placing ? "Placing…" : "Place order"}

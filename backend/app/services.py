@@ -1,7 +1,7 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -123,10 +123,14 @@ def cart_total_cents(cart: Cart) -> int:
     return sum(item.product.price_cents * item.quantity for item in cart.items)
 
 
-def create_order(db: Session, cart: Cart) -> Order:
+def create_order(db: Session, cart: Cart, user: User | None = None) -> Order:
     # The whole checkout is ONE transaction: everything below happens, or nothing does.
     if not cart.items:
         raise ValueError("The cart is empty")
+
+    # Where this is going. Read from the server, never sent by the browser: a client that
+    # could name an address id would be a client that could name somebody else's.
+    shipping_address = get_active_address(db, user, is_billing=False) if user else None
 
     # Lock the product rows until this transaction finishes, so that two people going for
     # the last unit at the same time cannot both pass the check below (session 14).
@@ -157,6 +161,9 @@ def create_order(db: Session, cart: Cart) -> Order:
     # Only now that every line is known to be servable.
     order = Order(
         customer_email=PLACEHOLDER_CUSTOMER_EMAIL,
+        # The row, not a copy of its lines. Safe because the row will never change: the
+        # order keeps the address it was sent to even after the person moves.
+        shipping_address_id=shipping_address.id if shipping_address else None,
         # The total is added up here, on the server, from prices the server read itself.
         total_cents=sum(
             products[item.product_id].price_cents * item.quantity for item in cart.items
@@ -184,7 +191,10 @@ def get_order(db: Session, order_id: int) -> Order | None:
     return db.scalars(
         select(Order)
         .where(Order.id == order_id)
-        .options(selectinload(Order.items).joinedload(OrderItem.product))
+        .options(
+            selectinload(Order.items).joinedload(OrderItem.product),
+            joinedload(Order.shipping_address),
+        )
     ).first()
 
 
@@ -282,39 +292,76 @@ def logout(db: Session, token: str) -> None:
     db.commit()
 
 
+def get_active_address(db: Session, user: User, is_billing: bool) -> Address | None:
+    return db.scalars(
+        select(Address).where(
+            Address.user_id == user.id,
+            Address.is_billing == is_billing,
+            Address.is_active.is_(True),
+        )
+    ).first()
+
+
 def list_addresses(db: Session, user: User) -> list[Address]:
-    # Shipping first, then billing: the screen always shows them in the same order.
+    # Only the ones in use. The retired rows are still in the table, kept for the orders
+    # that point at them, but they are nobody's business on screen.
     return list(
         db.scalars(
-            select(Address).where(Address.user_id == user.id).order_by(Address.is_billing)
+            select(Address)
+            .where(Address.user_id == user.id, Address.is_active.is_(True))
+            .order_by(Address.is_billing)  # shipping first, always the same order
         )
     )
 
 
 def save_address(db: Session, user: User, is_billing: bool, data: AddressIn) -> Address:
-    """Create this person's shipping or billing address, or change the one they have."""
-    address = db.scalars(
-        select(Address).where(Address.user_id == user.id, Address.is_billing == is_billing)
-    ).first()
+    """Set this person's shipping or billing address by adding a NEW row.
 
-    if address is None:
-        address = Address(user_id=user.id, is_billing=is_billing)
-        db.add(address)
-
-    # One function for "create" and for "change": the caller says what the address should
-    # be, not whether it already existed. That is what makes the PUT behind it idempotent.
-    address.recipient_name = data.recipient_name
-    address.street = data.street
-    address.city = data.city
-    address.postal_code = data.postal_code
-    address.country = data.country.upper()
+    Nothing here is ever an UPDATE of an address. Changing one retires the row in use and
+    writes another, so an order that points at the old one keeps the address it was
+    actually sent to, however many times the person moves house afterwards. Exactly the
+    lesson of the frozen price in order_items, arrived at from the other direction.
+    """
+    # Retire and insert in ONE transaction. In between there is no active address of this
+    # kind, and the partial unique index is what guarantees there is never more than one.
+    db.execute(
+        update(Address)
+        .where(
+            Address.user_id == user.id,
+            Address.is_billing == is_billing,
+            Address.is_active.is_(True),
+        )
+        .values(is_active=False)
+    )
+    address = Address(
+        user_id=user.id,
+        is_billing=is_billing,
+        is_active=True,
+        recipient_name=data.recipient_name,
+        street=data.street,
+        city=data.city,
+        postal_code=data.postal_code,
+        country=data.country.upper(),
+    )
+    db.add(address)
     db.commit()
     return address
 
 
-def delete_address(db: Session, user: User, is_billing: bool) -> bool:
+def deactivate_address(db: Session, user: User, is_billing: bool) -> bool:
+    """Stop using this address, without removing the row.
+
+    Deleting it would not be possible anyway: an order may point at it, and the foreign
+    key exists precisely to stop that order losing the address it was sent to.
+    """
     result = db.execute(
-        delete(Address).where(Address.user_id == user.id, Address.is_billing == is_billing)
+        update(Address)
+        .where(
+            Address.user_id == user.id,
+            Address.is_billing == is_billing,
+            Address.is_active.is_(True),
+        )
+        .values(is_active=False)
     )
     db.commit()
-    return result.rowcount > 0  # False when there was nothing to delete
+    return result.rowcount > 0  # False when there was no address in use to retire

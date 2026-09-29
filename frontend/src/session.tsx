@@ -1,10 +1,16 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   AUTH_TOKEN_KEY,
+  deleteAddress,
   getMe,
+  listAddresses,
   registerUser,
+  saveAddress,
   signIn,
   signOut,
+  type Address,
+  type AddressInput,
+  type AddressKind,
   type ApiError,
   type User,
 } from "./api";
@@ -12,9 +18,15 @@ import {
 type SessionValue = {
   user: User | null;
   loading: boolean;
+  // The addresses in use, kept here rather than fetched by each screen: the account page
+  // and the cart both need them, and two copies would drift apart.
+  addresses: Address[] | null;
+  shippingAddress: Address | null;
   signIn: (email: string, password: string) => Promise<string | null>;
   register: (email: string, password: string, fullName: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  saveAddress: (kind: AddressKind, values: AddressInput) => Promise<string | null>;
+  removeAddress: (kind: AddressKind) => Promise<string | null>;
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -27,6 +39,7 @@ export function useSession(): SessionValue {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [addresses, setAddresses] = useState<Address[] | null>(null);
   // True until we know whether the stored token is still good, so the header does not
   // flash "Sign in" for a moment at every page load for somebody who is signed in.
   const [loading, setLoading] = useState(true);
@@ -43,6 +56,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
+
+  // Whenever we know who this is, load their addresses; when they sign out, forget them
+  // rather than leaving the previous person's on screen.
+  useEffect(() => {
+    if (!user) {
+      setAddresses(null);
+      return;
+    }
+    listAddresses().then(setAddresses, () => setAddresses([]));
+  }, [user]);
 
   // These two return the error message to show, or null when it worked. The password is
   // an argument and nothing more: it is never put into state, so it cannot end up in a
@@ -81,9 +104,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  // Both of these end by storing what the server replied. Saving an address does not
+  // change a row, it creates one, so the id that comes back is a new id - which is
+  // exactly why the answer has to replace what was there instead of being patched.
+  async function doSaveAddress(
+    kind: AddressKind,
+    values: AddressInput,
+  ): Promise<string | null> {
+    try {
+      const saved = await saveAddress(kind, values);
+      setAddresses((current) => [...(current ?? []).filter((a) => a.kind !== kind), saved]);
+      return null;
+    } catch (e) {
+      return (e as ApiError).detail;
+    }
+  }
+
+  async function doRemoveAddress(kind: AddressKind): Promise<string | null> {
+    try {
+      await deleteAddress(kind);
+      setAddresses((current) => (current ?? []).filter((a) => a.kind !== kind));
+      return null;
+    } catch (e) {
+      return (e as ApiError).detail;
+    }
+  }
+
   return (
     <SessionContext.Provider
-      value={{ user, loading, signIn: doSignIn, register: doRegister, signOut: doSignOut }}
+      value={{
+        user,
+        loading,
+        addresses,
+        shippingAddress: addresses?.find((a) => a.kind === "shipping") ?? null,
+        signIn: doSignIn,
+        register: doRegister,
+        signOut: doSignOut,
+        saveAddress: doSaveAddress,
+        removeAddress: doRemoveAddress,
+      }}
     >
       {children}
     </SessionContext.Provider>

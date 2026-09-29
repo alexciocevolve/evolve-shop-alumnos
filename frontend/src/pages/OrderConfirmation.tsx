@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { getOrder } from "../api";
+import AddressLines from "../components/AddressLines";
 import { formatDate, formatPrice } from "../format";
 import { useData } from "../useData";
 
@@ -18,6 +19,15 @@ export default function OrderConfirmation() {
       <p className="status">
         {formatDate(order.created_at)} · {order.status} · {order.customer_email}
       </p>
+
+      {order.shipping_address && (
+        <section className="shipping-to">
+          <h3>Shipped to</h3>
+          {/* The address as it was on the day. It does not follow the customer around:
+              the order points at a row that is never edited. */}
+          <AddressLines address={order.shipping_address} />
+        </section>
+      )}
 
       <table>
         <thead>

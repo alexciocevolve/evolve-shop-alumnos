@@ -804,3 +804,39 @@ tfoot td {
 .address-actions .primary {
   margin-top: 0;
 }
+
+/* "Shipping to" on the cart and the order */
+.shipping-to {
+  margin-top: 24px;
+  padding: 20px 24px;
+  background: var(--light-gray);
+  border-radius: var(--radius);
+}
+
+.shipping-to h3 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.shipping-to .status {
+  padding: 0;
+  text-align: left;
+}
+
+.address-lines {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.address-lines + .field-hint {
+  margin-top: 8px;
+}
+
+.account-note {
+  margin-top: 16px;
+}

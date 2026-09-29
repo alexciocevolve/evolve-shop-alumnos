@@ -1,27 +1,13 @@
-import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
-import {
-  deleteAddress,
-  listAddresses,
-  saveAddress,
-  type Address,
-  type AddressInput,
-  type AddressKind,
-  type ApiError,
-} from "../api";
+import type { AddressKind } from "../api";
 import AddressForm from "../components/AddressForm";
 import { formatDate } from "../format";
 import { useSession } from "../session";
 
 export default function Account() {
-  const { user, loading } = useSession();
-  const [addresses, setAddresses] = useState<Address[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    listAddresses().then(setAddresses, (e: ApiError) => setLoadError(e.detail));
-  }, [user]);
+  // The addresses live in the session, not here: the cart needs them too, and two copies
+  // would drift apart the moment one screen saved and the other did not notice.
+  const { user, loading, addresses, saveAddress, removeAddress } = useSession();
 
   // Wait for the stored token to be checked before deciding; otherwise a reload of this
   // page would bounce a signed-in person to the sign-in form for a moment.
@@ -30,28 +16,6 @@ export default function Account() {
 
   const find = (kind: AddressKind) => addresses?.find((a) => a.kind === kind) ?? null;
 
-  // Both actions end by storing what the server replied, never a guess made here: the
-  // same rule the cart follows.
-  async function save(kind: AddressKind, values: AddressInput): Promise<string | null> {
-    try {
-      const saved = await saveAddress(kind, values);
-      setAddresses((current) => [...(current ?? []).filter((a) => a.kind !== kind), saved]);
-      return null;
-    } catch (e) {
-      return (e as ApiError).detail;
-    }
-  }
-
-  async function remove(kind: AddressKind): Promise<string | null> {
-    try {
-      await deleteAddress(kind);
-      setAddresses((current) => (current ?? []).filter((a) => a.kind !== kind));
-      return null;
-    } catch (e) {
-      return (e as ApiError).detail;
-    }
-  }
-
   return (
     <div className="account-page">
       <h2>My account</h2>
@@ -59,9 +23,7 @@ export default function Account() {
         {user.full_name} · {user.email} · joined {formatDate(user.created_at)}
       </p>
 
-      {loadError && <p className="status error">{loadError}</p>}
-
-      {addresses === null && !loadError ? (
+      {addresses === null ? (
         <p className="status">Loading addresses…</p>
       ) : (
         <div className="addresses">
@@ -69,17 +31,17 @@ export default function Account() {
             kind="shipping"
             title="Shipping address"
             address={find("shipping")}
-            onSave={save}
-            onDelete={remove}
+            onSave={saveAddress}
+            onDelete={removeAddress}
           />
           <AddressForm
             kind="billing"
             title="Billing address"
             address={find("billing")}
-            onSave={save}
-            onDelete={remove}
+            onSave={saveAddress}
+            onDelete={removeAddress}
             // The two addresses are separate rows, so using the same one for both means
-            // storing the same lines twice. This button makes that one click instead of
+            // storing the same lines twice. This makes that one click instead of
             // retyping, and it is the price of keeping the kind on the row itself.
             onCopyFromShipping={() => {
               const shipping = find("shipping");
@@ -95,6 +57,11 @@ export default function Account() {
           />
         </div>
       )}
+
+      <p className="field-hint account-note">
+        Changing an address does not overwrite the old one: it is kept, retired, so that
+        orders already placed still show the address they were actually sent to.
+      </p>
     </div>
   );
 }

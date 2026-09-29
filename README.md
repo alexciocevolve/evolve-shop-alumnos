@@ -98,6 +98,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp7-user` | `003_users` | Registro, acceso y sesiones, y qué se puede escribir en un log cuando hay contraseñas y tokens por medio | hecho |
 | `chkp8-address` | `003a_addresses` | Dirección de envío y de facturación, una de cada por persona, y en los logs solo el país | hecho |
 | `chkp9-update-address` | `003a_addresses` | La página *My account* para editar las dos direcciones | hecho |
+| `chkp10-show-address` | `003b_address_history` | El pedido recuerda a qué dirección se envió, porque las direcciones ya no se editan | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -284,8 +285,45 @@ de dirección es una **columna** de la propia fila, `is_billing`, no una fila en
 > leer. Lo que cuesta se ve en el botón *"Copy from shipping"*: usar la misma dirección para las dos cosas
 > guarda las mismas líneas dos veces.
 
-> **Los pedidos todavía no se asignan.** Siguen yendo al cliente de prueba de cp2; enlazar el pedido con
-> el usuario y con sus direcciones es el paso siguiente.
+### cp3 · El pedido recuerda a dónde se envió
+
+Las direcciones **dejan de editarse**. Cambiar una retira la fila que estaba en uso y escribe otra, así
+que la fila a la que apunta un pedido nunca cambia por debajo. Es la lección del precio congelado de
+`order_items`, alcanzada por el otro camino: allí copiando el valor, aquí apuntando a una fila que no se
+puede modificar.
+
+14. **La demostración**: con sesión iniciada, el carrito muestra *"Shipping to"* con la dirección de
+    envío. Comprar, y después **mudarse** cambiando la dirección en *My account*. Volver al pedido: sigue
+    diciendo la dirección antigua. La cuenta muestra la nueva.
+15. Mirar la tabla: la fila vieja sigue ahí, retirada, y el pedido apunta a ella.
+
+    ```bash
+    docker compose exec db psql -U shop -d shop -c "SELECT id, is_active, street, city FROM addresses ORDER BY id"
+    ```
+
+    ```bash
+    docker compose exec db psql -U shop -d shop -c "SELECT id, shipping_address_id FROM orders"
+    ```
+
+16. Lo mismo en Kibana. El `order.create` lleva `shop.shipping_address_id`, y cada `user.address.save`
+    lleva `shop.address_id` con el número de la fila nueva. Son el mismo número, así que se puede ver a
+    qué dirección fue un pedido sin que la calle aparezca en ningún log. `order.create` lleva también
+    `user.id`, o `shop.guest: true` si se compró sin cuenta.
+17. Lo que mantiene el orden es un **índice único parcial**: único sobre `(user_id, is_billing)` pero
+    **solo** `WHERE is_active`. Cada persona tiene como mucho una de cada en uso y todas las retiradas que
+    haga falta. Probar a meter una segunda activa a mano y ver cómo la base de datos la rechaza.
+18. `is_active` **no sale en la API**. Que alguien siga usando una dirección es asunto suyo; el pedido
+    apunta a una fila concreta y eso no le afecta.
+19. La dirección **no se envía desde el navegador**: el servidor la busca a partir del token. Un cliente
+    que pudiera nombrar un `id` de dirección sería un cliente capaz de nombrar la de otra persona.
+20. El `downgrade` de `003b` fue el segundo que autogenerate no pudo escribir bien: el esquema anterior
+    solo admite una dirección por persona y tipo, y para entonces ya hay retiradas. La versión corregida
+    borra las retiradas primero **y dice que eso destruye información**, porque el esquema viejo no tiene
+    dónde guardarla.
+
+> **El comprador todavía es el de prueba.** El pedido ya sabe a dónde va, pero `customer_email` sigue
+> siendo `PLACEHOLDER_CUSTOMER_EMAIL` y no hay `orders.user_id`. Enlazar el pedido con la persona es el
+> paso siguiente.
 
 ## Fuera de alcance
 
@@ -374,13 +412,13 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |
 | `cart.item.set` | info / warning | `PUT /cart/items/{id}`, bien (`success`) o sin stock (`failure`) | `shop.product_id`, `shop.quantity`, `error.message` si falla, y el resumen del carrito |
 | `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
-| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `error.message` si falla |
+| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `shop.shipping_address_id`, `user.id` o `shop.guest`, `error.message` si falla |
 | `order.miss` | warning | `GET /orders/{id}` que no existe | `shop.order_id` |
 | `user.register` | info / warning | `POST /users`, hecho o con el correo ya registrado | `user.id` si sale bien, `event.reason: email_taken` si no |
 | `user.login` | info / warning | `POST /login`, dentro o fuera | `user.id` y `shop.session_ref` si entra; `event.reason` (`wrong_password` o `unknown_email`) y `user.id` o `shop.email_ref` si no |
 | `user.session` | info | Un token de sesión caducado o inventado (`401`) | `shop.session_ref` |
 | `user.logout` | info | `POST /logout` | `shop.session_ref` |
-| `user.address.save` | info | `PUT /me/addresses/{kind}` | `user.id`, `shop.address_kind` (`shipping` o `billing`), `shop.address_country` |
+| `user.address.save` | info | `PUT /me/addresses/{kind}` | `user.id`, `shop.address_kind` (`shipping` o `billing`), `shop.address_country`, `shop.address_id` (la fila nueva) |
 | `user.address.delete` | info | `DELETE /me/addresses/{kind}` | `user.id`, `shop.address_kind` |
 
 El resumen del carrito son `shop.cart_ref`, `shop.cart_lines`, `shop.cart_units` y

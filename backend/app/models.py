@@ -5,9 +5,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     String,
     Text,
-    UniqueConstraint,
     func,
     text,
 )
@@ -95,9 +95,19 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(20), server_default="paid")
     total_cents: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Which address this went to. Nullable, because an order placed without signing in
+    # has none, and because that is what lets this column be added without breaking a
+    # single order that already exists.
+    shipping_address_id: Mapped[int | None] = mapped_column(
+        ForeignKey("addresses.id", name="fk_orders_shipping_address_id")
+    )
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    # Pointing at the row is enough to keep the address as it was, because an address row
+    # is never changed: editing one writes a NEW row and retires the old one. Same lesson
+    # as the price in order_items, reached a different way.
+    shipping_address: Mapped["Address | None"] = relationship()
 
 
 class OrderItem(Base):
@@ -152,10 +162,17 @@ class UserSession(Base):
 class Address(Base):
     __tablename__ = "addresses"
     __table_args__ = (
-        # One shipping address and one billing address per person, and the database is
-        # what enforces it: with the rule only in Python, two requests arriving together
-        # would both pass the check and leave two billing addresses behind.
-        UniqueConstraint("user_id", "is_billing", name="uq_addresses_user_is_billing"),
+        # Rows are never edited, so a person accumulates old addresses; what has to stay
+        # unique is the CURRENT one. A partial unique index says exactly that: at most one
+        # active shipping address and one active billing address each, and any number of
+        # retired ones. The rule is in the database, so no amount of clicking can break it.
+        Index(
+            "uq_addresses_one_active",
+            "user_id",
+            "is_billing",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -167,6 +184,11 @@ class Address(Base):
     # carried data of their own or were added without a deployment; two fixed kinds that
     # the code has to know about anyway do not, and the join would be for nothing.
     is_billing: Mapped[bool] = mapped_column(server_default=text("false"))
+    # Whether this is the address the person uses now. Changing an address retires the old
+    # row and adds a new one, so the old one is still there for the orders that point at
+    # it. This flag is the user's business only: an order ignores it completely, because
+    # an order points at one exact row and does not care whether it is still in use.
+    is_active: Mapped[bool] = mapped_column(server_default=text("true"))
     recipient_name: Mapped[str] = mapped_column(String(200))
     street: Mapped[str] = mapped_column(String(200))
     city: Mapped[str] = mapped_column(String(100))

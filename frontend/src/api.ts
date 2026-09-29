@@ -72,6 +72,22 @@ export function reportProductView(id: number) {
   fetch(`${BASE}/products/${id}/views`, { method: "POST" }).catch(() => {});
 }
 
+export type AddressKind = "shipping" | "billing";
+
+export type Address = {
+  id: number;
+  kind: AddressKind;
+  recipient_name: string;
+  street: string;
+  city: string;
+  postal_code: string;
+  country: string;
+};
+
+// What the form sends: the address itself, with no id and no kind. Which slot it goes
+// into is the path, and whose it is comes from the session - never from the body.
+export type AddressInput = Omit<Address, "id" | "kind">;
+
 // A cart line has no price of its own: price_cents is TODAY's price, sent by the server.
 export type CartItem = {
   product_id: number;
@@ -98,6 +114,9 @@ export type Order = {
   status: string;
   total_cents: number;
   created_at: string;
+  // The address this order went to, as it was on the day. Null for an order placed
+  // without signing in.
+  shipping_address: Address | null;
   items: OrderItem[];
 };
 
@@ -138,22 +157,6 @@ export const signIn = (email: string, password: string) =>
 export const getMe = () => request<User>("/me");
 
 export const signOut = () => request<void>("/logout", { method: "POST" });
-
-export type AddressKind = "shipping" | "billing";
-
-export type Address = {
-  id: number;
-  kind: AddressKind;
-  recipient_name: string;
-  street: string;
-  city: string;
-  postal_code: string;
-  country: string;
-};
-
-// What the form sends: the address itself, with no id and no kind. Which slot it goes
-// into is the path, and whose it is comes from the session - never from the body.
-export type AddressInput = Omit<Address, "id" | "kind">;
 
 export const listAddresses = () => request<Address[]>("/me/addresses");
 
