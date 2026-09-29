@@ -1,8 +1,23 @@
+/* Same look as evolve.es: Inter for text, Plus Jakarta Sans for headings,
+   near-black and light grey instead of a brand colour, rounded corners. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap");
+
 :root {
-  --border: #e2e5ea;
-  --muted: #667085;
-  --accent: #2b59c3;
-  --danger: #b42318;
+  --dark: #1a1a1a;
+  --light-gray: #f7f7f7;
+  --gray-hover: #ededed;
+  --border: rgba(26, 26, 26, 0.1);
+  --muted: rgba(26, 26, 26, 0.6);
+  --danger: #dc3545;
+  --radius: 12px;
+  --radius-card: 20px;
+  --radius-pill: 30px;
+  --shadow: rgba(0, 0, 0, 0.18) 0 0.6px 0.6px -1.25px, rgba(0, 0, 0, 0.16) 0 2.29px 2.29px -2.5px,
+    rgba(0, 0, 0, 0.06) 0 10px 10px -3.75px;
+  --shadow-hover: rgba(0, 0, 0, 0.43) 0 0.6px 0.6px -1.25px, rgba(0, 0, 0, 0.38) 0 2.29px 2.29px -2.5px,
+    rgba(0, 0, 0, 0.15) 0 10px 10px -3.75px;
+  --container: 1140px;
+  --heading-font: "Plus Jakarta Sans", sans-serif;
 }
 
 * {
@@ -11,31 +26,41 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #1d2433;
-  background: #f6f7f9;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--dark);
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
 }
 
 main {
-  max-width: 1100px;
+  max-width: var(--container);
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 32px 16px 64px;
 }
 
-/* Header */
+/* Header: stays on top while scrolling, white and blurred like the one on evolve.es.
+   The side padding lines the title up with the content of <main>. */
 .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  height: 56px;
-  background: #fff;
-  border-bottom: 1px solid var(--border);
+  min-height: 72px;
+  padding: 0.8rem max(16px, (100% - var(--container)) / 2 + 16px);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
 }
 
 .site-header h1 {
   margin: 0;
-  font-size: 1.25rem;
+  font-family: var(--heading-font);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 /* Category filter */
@@ -43,17 +68,20 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 32px;
 }
 
 .chip {
   font: inherit;
-  padding: 6px 14px;
-  color: inherit;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 12px 18px;
+  color: var(--dark);
+  background: var(--light-gray);
+  border: 0;
+  border-radius: var(--radius);
   cursor: pointer;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 
 /* Only the category buttons: the names come from the database in lower case
@@ -62,17 +90,25 @@ main {
   text-transform: capitalize;
 }
 
+.chip:hover {
+  background: var(--gray-hover);
+}
+
 .chip[aria-pressed="true"] {
   color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--dark);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--dark);
+  outline-offset: 2px;
 }
 
 /* Cards grid */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 24px;
 }
 
 .card {
@@ -80,13 +116,51 @@ main {
   display: flex;
   flex-direction: column;
   background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: transform 0.5s ease, box-shadow 0.5s ease;
 }
 
 .card:hover {
-  border-color: var(--accent);
+  transform: scale(1.02);
+  box-shadow: var(--shadow-hover);
+}
+
+/* The width/height attributes on <img> plus this aspect-ratio reserve the space
+   before the image arrives, so the page does not jump while images load. */
+.card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--light-gray);
+  transition: transform 0.3s ease;
+}
+
+.card:hover img {
+  transform: scale(1.1);
+}
+
+/* z-index + background: the zoomed image slides under the text instead of over it.
+   z-index works here without `position` because .card-body is a flex item. It matters:
+   with position: relative, the stretched button below would cover only the text and
+   clicking the image would not open the detail. */
+.card-body {
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px 20px;
+  background: #fff;
+}
+
+.card-body h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 500;
+  line-height: 1.5;
 }
 
 /* The product name is a real button; ::after stretches its clickable area over the
@@ -113,46 +187,27 @@ main {
 }
 
 .card-open:focus-visible::after {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--dark);
   outline-offset: -2px;
-  border-radius: 8px;
-}
-
-/* The width/height attributes on <img> plus this aspect-ratio reserve the space
-   before the image arrives, so the page does not jump while images load. */
-.card img {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  background: var(--border);
-}
-
-.card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-}
-
-.card-body h3 {
-  margin: 0;
-  font-size: 1rem;
+  border-radius: var(--radius-card);
 }
 
 .price {
+  font-family: var(--heading-font);
+  font-size: 1.25rem;
   font-weight: 600;
 }
 
 .badge {
   align-self: flex-start;
-  padding: 2px 8px;
-  border-radius: 999px;
+  margin-top: 4px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
   font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--danger);
-  background: #fef3f2;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #fff;
+  background: var(--dark);
 }
 
 .badge-ok {
@@ -162,23 +217,25 @@ main {
 
 /* Product detail */
 .modal {
-  width: min(680px, calc(100% - 32px));
+  width: min(720px, calc(100% - 32px));
   padding: 0; /* no padding: then any click on the element itself is a click outside */
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   background: #fff;
   color: inherit;
+  box-shadow: var(--shadow-hover);
 }
 
 .modal::backdrop {
-  background: rgb(16 24 40 / 0.6);
+  background: rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(4px);
 }
 
 .modal-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  padding: 20px;
+  gap: 24px;
+  padding: 24px;
 }
 
 .modal-image {
@@ -186,25 +243,35 @@ main {
   height: auto;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  border-radius: 8px;
-  background: var(--border);
+  border-radius: var(--radius);
+  background: var(--light-gray);
 }
 
 .modal-text {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .modal-text h2 {
   margin: 0;
-  font-size: 1.15rem;
+  padding-right: 32px; /* room for the close button */
+  font-family: var(--heading-font);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .modal-price {
   margin: 0;
-  font-size: 1.3rem;
+  font-family: var(--heading-font);
+  font-size: 1.5rem;
   font-weight: 600;
+}
+
+.modal-text .badge {
+  margin-top: 0;
 }
 
 .modal-description {
@@ -215,22 +282,27 @@ main {
 
 .modal-close {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 32px;
-  height: 32px;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
   font-size: 1.4rem;
   line-height: 1;
-  color: var(--muted);
-  background: #fff;
-  border: 1px solid var(--border);
+  color: var(--dark);
+  background: var(--light-gray);
+  border: 0;
   border-radius: 50%;
   cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
 }
 
 .modal-close:hover {
-  color: inherit;
-  border-color: var(--muted);
+  background: var(--gray-hover);
+}
+
+.modal-close:focus-visible {
+  outline: 2px solid var(--dark);
+  outline-offset: 2px;
 }
 
 /* On a narrow screen the image goes above the text instead of beside it */
@@ -247,7 +319,7 @@ main {
 
 /* Loading / empty / error messages */
 .status {
-  padding: 24px 0;
+  padding: 32px 0;
   text-align: center;
   color: var(--muted);
 }
@@ -259,21 +331,43 @@ main {
 /* Tables */
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   background: #fff;
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 th,
 td {
-  padding: 10px 12px;
+  padding: 14px 16px;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
+tr:last-child td {
+  border-bottom: 0;
+}
+
 th {
   font-size: 0.8rem;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
+  background: var(--light-gray);
+}
+
+/* Whoever asks the system for less motion gets no zoom on hover */
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .card img {
+    transition: none;
+  }
+
+  .card:hover,
+  .card:hover img {
+    transform: none;
+  }
 }
