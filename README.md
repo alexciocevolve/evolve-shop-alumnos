@@ -94,6 +94,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp3-custom-images` | `001b_product_images` | Se cambian las fotos a unas que no son de stock | hecho |
 | `chkp4-separate-category` | `001c_categories_expand` y `001d_categories_contract` | Las categorías en su propia tabla, en dos migraciones (EXPAND-CONTRACT), y cada una con su log | hecho |
 | `chkp5-modal-description` | `001d_categories_contract` | El detalle del producto en un `<dialog>` sin pedir nada al servidor, y el navegador avisando de que se ha abierto | hecho |
+| `chkp6-cart` | `002_cart_and_orders` | Carrito (mutable, efímero) frente a pedido (inmutable, precio congelado), y un log por cada paso de la compra | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -165,6 +166,49 @@ docker compose exec db psql -U shop -d shop
    `loading="lazy"` retrasa **las imágenes**; el `IntersectionObserver` retrasa **la petición de la
    página siguiente**. Si la ventana es muy alta, el final de la lista ya está a la vista y se cargan las
    tres páginas de golpe: reduce la altura de la ventana o amplía el zoom del navegador.
+
+### cp2 · Carrito y pedido
+
+1. Abrir `cart_items` y `order_items` lado a lado en [`models.py`](backend/app/models.py). **Esa es la
+   sesión**: `cart_items` **no** tiene columna de precio y `order_items` **sí**. Un carrito enseña el precio
+   de hoy, leído de `products`; un pedido guarda el precio al que se compró.
+2. El recorrido completo por curl. El token del carrito viaja en una cabecera, nunca en la dirección:
+
+   ```bash
+   curl -s -X POST http://localhost:8000/cart
+   ```
+
+   ```bash
+   curl -s -X PUT http://localhost:8000/cart/items/1 -H "X-Cart-Token: TOKEN" -H "Content-Type: application/json" -d '{"quantity":2}'
+   ```
+
+   Repetir ese mismo `PUT` deja el carrito igual: **fija** la cantidad, no suma. Por eso reintentarlo tras
+   un corte de red es inofensivo. `DELETE` quita la línea: cada verbo hace lo que dice su nombre.
+3. La demostración del precio congelado. Hacer el pedido, cambiar el precio en psql y volver a leerlo:
+
+   ```bash
+   docker compose exec db psql -U shop -d shop -c "UPDATE products SET price_cents = 1 WHERE id = 1"
+   ```
+
+   ```bash
+   curl -s http://localhost:8000/orders/1
+   ```
+
+   El pedido sigue diciendo 89900. El catálogo ya dice 1.
+4. Pedir más unidades de las que hay: `409` con el detalle, y el stock **intacto**. Con dos líneas, una
+   servible y otra no, no se mueve ninguna: el pedido es todo o nada.
+5. La carrera de la sesión 14: dos carritos con la última unidad, pagando a la vez. Uno recibe `201` y el
+   otro `409`, y el stock acaba en 0, nunca en −1. Lo consigue `SELECT ... FOR UPDATE` en `create_order`.
+6. En el navegador: añadir desde el catálogo, `+` / `−` / `Remove` en el carrito, comprar y ver la
+   confirmación. El carrito sobrevive a recargar la página, porque el token está en `localStorage`.
+7. Lo mismo, visto desde Kibana. Filtrar por `shop.cart_ref` con el valor de cualquier línea `cart.*` da
+   la historia de ese carrito en orden: creado, cada producto añadido o quitado y el pedido del final. El
+   intento que falló en el paso 5 está en `event.action: order.create and event.outcome: failure`.
+
+> **Todavía no hay usuarios.** Cada pedido se asigna al mismo cliente de prueba, definido en
+> [`backend/app/config.py`](backend/app/config.py) como `PLACEHOLDER_CUSTOMER_EMAIL`. Por eso `POST /orders`
+> no lleva cuerpo: los precios, el total y el comprador los decide el servidor. El registro, la
+> autenticación y la asignación real del pedido llegan en el checkpoint siguiente.
 
 ## Fuera de alcance
 
@@ -249,6 +293,27 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `product.miss` | warning | `GET /products/{id}` que no existe | `shop.product_id` |
 | `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
 | `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |
+| `cart.create` | info | `POST /cart` | `shop.cart_ref` y el resumen del carrito |
+| `cart.miss` | warning | Un token de carrito que no existe | `shop.cart_ref` |
+| `cart.item.set` | info / warning | `PUT /cart/items/{id}`, bien (`success`) o sin stock (`failure`) | `shop.product_id`, `shop.quantity`, `error.message` si falla, y el resumen del carrito |
+| `cart.item.remove` | info | `DELETE /cart/items/{id}` | `shop.product_id` y el resumen del carrito |
+| `order.create` | info / warning | `POST /orders`, hecho (`success`) o rechazado (`failure`) | `shop.order_id`, `shop.order_total_cents`, `shop.order_lines`, `shop.order_units`, `shop.product_ids`, `shop.cart_ref`, `error.message` si falla |
+| `order.miss` | warning | `GET /orders/{id}` que no existe | `shop.order_id` |
+
+El resumen del carrito son `shop.cart_ref`, `shop.cart_lines`, `shop.cart_units` y
+`shop.cart_total_cents`. Van en cada línea para que cualquiera se entienda sola, sin tener que
+buscar las anteriores.
+
+Dos cosas de estas líneas que se repiten en el resto del curso:
+
+- **`event.outcome`** es un campo de ECS que dice si la acción salió bien (`success`) o no
+  (`failure`). Con él, una sola búsqueda (`event.outcome: failure`) enseña todo lo que la tienda ha
+  rechazado, sea lo que sea.
+- **El token del carrito no aparece nunca.** Quien tiene el token puede abrir el carrito, y los logs
+  los lee más gente que la base de datos. En su lugar va `shop.cart_ref`, los primeros caracteres de
+  su hash (`fingerprint()` en `observability.py`). El mismo token da siempre la misma huella, así que
+  se puede seguir un carrito de principio a fin, pero con la huella no se puede abrir. El correo del
+  cliente tampoco se escribe: es un dato personal y con el número de pedido basta.
 
 El servidor solo puede apuntar lo que le llega. Abrir el detalle de un producto no le pide nada
 (los datos ya estaban en la página), así que, por sí solo, el backend nunca sabría que ha pasado.

@@ -24,6 +24,7 @@ mean: filters, dashboards and alerts work without configuring anything. Inventin
 costs nothing today and costs a mapping exercise for every tool, forever.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -112,6 +113,18 @@ def configure_logging() -> None:
 
 
 log = logging.getLogger("shop")
+
+
+def fingerprint(secret: str) -> str:
+    """A short stand-in for a secret value, safe to write in a log.
+
+    Some values work as keys: whoever has a cart token can open that cart. Logs are read by
+    more people than the database and they get copied to other systems, so a key should
+    never be written in them. The first characters of its SHA-256 hash are enough to follow
+    one cart through the logs (the same token always gives the same fingerprint), and
+    nobody can get the token back from them.
+    """
+    return hashlib.sha256(secret.encode()).hexdigest()[:12]
 
 
 async def log_requests(request, call_next):

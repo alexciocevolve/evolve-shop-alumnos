@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Product } from "../api";
+import { useCart } from "../cart";
 import { formatPrice } from "../format";
 
 // A native <dialog>, not a <div> pretending to be one. The browser already gives us,
@@ -14,6 +15,8 @@ export default function ProductModal({
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const { cart, setQuantity } = useCart();
+  const inCart = cart?.items.find((item) => item.product_id === product.id)?.quantity ?? 0;
 
   // showModal() is what makes it a MODAL dialog (backdrop + focus trap); simply rendering
   // the element, or setting the `open` attribute, would not. It has to happen after the
@@ -53,6 +56,14 @@ export default function ProductModal({
             <span className="badge">Out of stock</span>
           )}
           <p className="modal-description">{product.description}</p>
+          <button
+            type="button"
+            className="primary"
+            disabled={product.stock === 0}
+            onClick={() => setQuantity(product.id, inCart + 1)}
+          >
+            {inCart > 0 ? `Add to cart (${inCart})` : "Add to cart"}
+          </button>
         </div>
       </div>
 

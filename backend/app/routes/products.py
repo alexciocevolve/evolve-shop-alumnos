@@ -1,5 +1,3 @@
-from urllib.parse import urljoin
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
@@ -7,6 +5,7 @@ from app import services
 from app.db import get_db
 from app.models import Product
 from app.observability import log
+from app.routes.shared import absolute_url
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -23,11 +22,8 @@ def product_to_dict(p: Product, request: Request) -> dict:
         "category": p.category.name,
         "price_cents": p.price_cents,
         "stock": p.stock,
-        # How to get the image: a plain GET to this address. The database stores a path
-        # relative to this server (/images/product-1.svg); the full address is built from
-        # the one this request arrived at, so the client never has to know how the server
-        # is laid out. An address that is already absolute (an external CDN) passes through.
-        "image_url": urljoin(str(request.base_url), p.image_url),
+        # How to get the image: a plain GET to this address (see absolute_url).
+        "image_url": absolute_url(request, p.image_url),
     }
 
 

@@ -1,4 +1,5 @@
 import type { Product } from "../api";
+import { useCart } from "../cart";
 import { formatPrice } from "../format";
 
 export default function ProductCard({
@@ -8,6 +9,11 @@ export default function ProductCard({
   product: Product;
   onOpen: () => void;
 }) {
+  const { cart, setQuantity } = useCart();
+  // How many of this product are already in the cart, so "Add" means "one more".
+  const inCart =
+    cart?.items.find((item) => item.product_id === product.id)?.quantity ?? 0;
+
   return (
     <article className="card">
       {/* loading="lazy": the browser downloads this image only when it is about to be
@@ -25,6 +31,16 @@ export default function ProductCard({
         </h3>
         <span className="price">{formatPrice(product.price_cents)}</span>
         {product.stock === 0 && <span className="badge">Out of stock</span>}
+        {/* This button sits ON TOP of the stretched card button (z-index in the
+            stylesheet), so clicking it adds to the cart instead of opening the detail. */}
+        <button
+          type="button"
+          className="add"
+          disabled={product.stock === 0}
+          onClick={() => setQuantity(product.id, inCart + 1)}
+        >
+          {inCart > 0 ? `Add to cart (${inCart})` : "Add to cart"}
+        </button>
       </div>
     </article>
   );
