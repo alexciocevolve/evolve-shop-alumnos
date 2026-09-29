@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { listCategories, listProducts, type ApiError, type Product } from "../api";
+import {
+  listCategories,
+  listProducts,
+  reportProductView,
+  type ApiError,
+  type Product,
+} from "../api";
 import { useData } from "../useData";
 import ProductCard from "../components/ProductCard";
+import ProductModal from "../components/ProductModal";
 
 // Two loads on one screen, and each one needs a different tool.
 //
@@ -20,6 +27,9 @@ export default function Catalog() {
   const [nextCursor, setNextCursor] = useState<number | null>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The product whose detail is open, or null for none. The list already carries the
+  // description, so opening the detail asks the server for nothing: it is data we have.
+  const [selected, setSelected] = useState<Product | null>(null);
 
   const sentinel = useRef<HTMLDivElement>(null);
   // Bumped on every category change, so an answer that arrives late for the previous
@@ -52,6 +62,13 @@ export default function Catalog() {
     setNextCursor(0);
     setLoading(false);
     setError(null);
+  }
+
+  function openProduct(product: Product) {
+    setSelected(product);
+    // Here, in the click, and not in a useEffect inside the modal: in development React
+    // runs every effect twice (StrictMode), and each view would be logged twice.
+    reportProductView(product.id);
   }
 
   // Lazy loading of the NEXT PAGE (not of the images: that is loading="lazy" in ProductCard).
@@ -101,9 +118,15 @@ export default function Catalog() {
 
       <div className="grid">
         {items.map((product) => (
-          <ProductCard key={product.id} product={product} />
+          <ProductCard
+            key={product.id}
+            product={product}
+            onOpen={() => openProduct(product)}
+          />
         ))}
       </div>
+
+      {selected && <ProductModal product={selected} onClose={() => setSelected(null)} />}
 
       <div ref={sentinel} className="sentinel" />
 

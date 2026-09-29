@@ -1,6 +1,6 @@
 from urllib.parse import urljoin
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app import services
@@ -73,8 +73,7 @@ def list_products(
     return {"items": [product_to_dict(p, request) for p in products], "next_cursor": next_cursor}
 
 
-@router.get("/{product_id}")
-def get_product(product_id: int, request: Request, db: Session = Depends(get_db)):
+def find_product_or_404(db: Session, product_id: int) -> Product:
     product = services.get_product(db, product_id)
     if product is None:
         # A warning and not an error: nothing is broken. But it is worth having, because
@@ -85,15 +84,22 @@ def get_product(product_id: int, request: Request, db: Session = Depends(get_db)
             extra={"event.action": "product.miss", "shop.product_id": product_id},
         )
         raise HTTPException(404, f"Product {product_id} not found")
+    return product
 
+
+def log_product_view(product: Product, source: str) -> None:
+    # Two routes report the same event, so the line is written in one place only.
+    # `source` says which one it came from: "api" for GET /products/{id}, "modal" for the
+    # detail opened in the shop's own page.
     log.info(
         f"product viewed: {product.name}",
         extra={
             "event.action": "product.view",
+            "shop.view_source": source,
             "shop.product_id": product.id,
             "shop.product_name": product.name,
-            # .name: product.category is the related ROW now, and logging the object would
-            # write "<Category object at 0x...>" into Elasticsearch instead of "laptops".
+            # product.category is the related row now. Logging the object itself would
+            # write "<Category object at 0x...>" instead of "laptops".
             "shop.category": product.category.name,
             "shop.price_cents": product.price_cents,
             # The stock AT THE MOMENT IT WAS SHOWN. Not the same as today's: this is what
@@ -102,4 +108,24 @@ def get_product(product_id: int, request: Request, db: Session = Depends(get_db)
             "shop.stock": product.stock,
         },
     )
+
+
+@router.get("/{product_id}")
+def get_product(product_id: int, request: Request, db: Session = Depends(get_db)):
+    product = find_product_or_404(db, product_id)
+    log_product_view(product, source="api")
     return product_to_dict(product, request)
+
+
+# response_class=Response: an empty answer, without the "content-type: application/json"
+# header that FastAPI would otherwise add to a body that does not exist.
+@router.post("/{product_id}/views", status_code=204, response_class=Response)
+def record_product_view(product_id: int, db: Session = Depends(get_db)):
+    # The detail modal does not ask the server for anything, because the list already
+    # brought the description. Good for speed, but it means the server never finds out
+    # that somebody opened a product, and so it cannot log it.
+    #
+    # So the browser tells the server with this call. Nothing is saved in the database and
+    # nothing comes back (204 No Content): the only result is the log line.
+    product = find_product_or_404(db, product_id)
+    log_product_view(product, source="modal")

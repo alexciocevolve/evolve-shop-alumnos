@@ -76,12 +76,46 @@ main {
 }
 
 .card {
+  position: relative; /* the stretched button below is positioned against this */
   display: flex;
   flex-direction: column;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.card:hover {
+  border-color: var(--accent);
+}
+
+/* The product name is a real button; ::after stretches its clickable area over the
+   whole card, so the mouse can click anywhere and the keyboard still finds one button. */
+.card-open {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.card-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+/* The focus ring is drawn around the whole card, not around the text */
+.card-open:focus-visible {
+  outline: none;
+}
+
+.card-open:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
 }
 
 /* The width/height attributes on <img> plus this aspect-ratio reserve the space
@@ -119,6 +153,91 @@ main {
   font-weight: 600;
   color: var(--danger);
   background: #fef3f2;
+}
+
+.badge-ok {
+  color: #067647;
+  background: #ecfdf3;
+}
+
+/* Product detail */
+.modal {
+  width: min(680px, calc(100% - 32px));
+  padding: 0; /* no padding: then any click on the element itself is a click outside */
+  border: 0;
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+}
+
+.modal::backdrop {
+  background: rgb(16 24 40 / 0.6);
+}
+
+.modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+}
+
+.modal-image {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--border);
+}
+
+.modal-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-text h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.modal-price {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.modal-description {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.modal-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: inherit;
+  border-color: var(--muted);
+}
+
+/* On a narrow screen the image goes above the text instead of beside it */
+@media (max-width: 560px) {
+  .modal-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Empty element after the grid: when it scrolls into view, the next page is requested */

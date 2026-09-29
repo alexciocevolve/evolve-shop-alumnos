@@ -47,3 +47,10 @@ export function listProducts({ category, cursor }: { category?: string; cursor?:
 }
 
 export const getProduct = (id: number) => request<Product>(`/products/${id}`);
+
+// Tells the server that the customer opened a product's detail, so it can be logged.
+// It does not use request(): the answer is empty (204) and nobody waits for it. If the
+// call fails, the customer should not notice anything, so the error is ignored.
+export function reportProductView(id: number) {
+  fetch(`${BASE}/products/${id}/views`, { method: "POST" }).catch(() => {});
+}

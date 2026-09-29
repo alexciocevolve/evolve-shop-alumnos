@@ -93,6 +93,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp2-frontend` | `001_products` | Una frontend básico para ver todos los productos del catálogo para cada categoria | hecho |
 | `chkp3-custom-images` | `001b_product_images` | Se cambian las fotos a unas que no son de stock | hecho |
 | `chkp4-separate-category` | `001c_categories_expand` y `001d_categories_contract` | Las categorías en su propia tabla, en dos migraciones (EXPAND-CONTRACT), y cada una con su log | hecho |
+| `chkp5-modal-description` | `001d_categories_contract` | El detalle del producto en un `<dialog>` sin pedir nada al servidor, y el navegador avisando de que se ha abierto | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -153,7 +154,13 @@ docker compose exec db psql -U shop -d shop
    ```
 
 4. `GET /products/999` devuelve `404` con `{"detail": "Product 999 not found"}`.
-5. Navegador con la pestaña **Red** abierta: bajar y ver las **tres** peticiones a `/products`
+5. Pinchar en cualquier parte de una tarjeta: se abre el detalle con la imagen, la descripción, el
+   precio y si queda stock. Se cierra pinchando fuera, con `Esc` o con la `×`. En la pestaña **Red**
+   no aparece ningún `GET` nuevo: la descripción ya venía en el listado, así que el detalle no le pide
+   datos al servidor. Lo único que sale es un `POST /products/{id}/views` que vuelve vacío (`204`).
+   No trae nada: solo avisa al servidor de que alguien ha abierto ese producto, para que quede en
+   los logs (ver [Qué cuenta la tienda](#qué-cuenta-la-tienda-además-de-http)).
+6. Navegador con la pestaña **Red** abierta: bajar y ver las **tres** peticiones a `/products`
    (`cursor=0`, `cursor=12`, `cursor=24`) y las imágenes llegando después. Son dos mecanismos distintos:
    `loading="lazy"` retrasa **las imágenes**; el `IntersectionObserver` retrasa **la petición de la
    página siguiente**. Si la ventana es muy alta, el final de la lista ya está a la vista y se cargan las
@@ -238,10 +245,16 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `event.action` | Nivel | Cuándo | Campos |
 |---|---|---|---|
 | `catalogue.list` | info | `GET /products` | `shop.category`, `shop.products_returned`, `shop.product_ids`, `shop.cursor`, `shop.has_next_page` |
-| `product.view` | info | `GET /products/{id}` | `shop.product_id`, `shop.product_name`, `shop.category`, `shop.price_cents`, `shop.stock` |
+| `product.view` | info | `GET /products/{id}` y `POST /products/{id}/views` | `shop.view_source` (`api` o `modal`), `shop.product_id`, `shop.product_name`, `shop.category`, `shop.price_cents`, `shop.stock` |
 | `product.miss` | warning | `GET /products/{id}` que no existe | `shop.product_id` |
 | `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
 | `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |
+
+El servidor solo puede apuntar lo que le llega. Abrir el detalle de un producto no le pide nada
+(los datos ya estaban en la página), así que, por sí solo, el backend nunca sabría que ha pasado.
+Por eso el navegador hace un `POST /products/{id}/views` al abrirlo. Es lo mismo que hace cualquier
+web con sus estadísticas: la página avisa de lo que ocurre en la pantalla, porque el servidor no
+lo ve. Si ese aviso falla, el cliente no se entera y la tienda sigue funcionando.
 
 ### Dos streams, dos audiencias
 
