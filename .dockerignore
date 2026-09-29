@@ -1,0 +1,37 @@
+# The backend image is built with the REPOSITORY ROOT as its context, not backend/, so
+# that the product images in data/images can travel inside it (see backend/Dockerfile).
+# Docker reads the .dockerignore at the root of the context, so this is the one that counts.
+#
+# Everything here is either enormous, machine-specific, or has no business in a server
+# image. Without it the build would upload the database files and two node_modules.
+
+.git
+.github
+
+# Local environments and caches, none of which belong in a Linux image.
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/dist
+
+# Anything else under data/ that a local setup may leave behind. Only data/images is
+# needed, and it is copied on purpose (see backend/Dockerfile).
+data/postgres
+
+# The log collector runs as a container of its own. Its configuration has no business
+# inside the API's image.
+filebeat
+
+# Secrets stay out of images on principle: what is not in the image cannot leak from it.
+.env
+
+# Not needed to RUN the shop: the frontend is deployed as a static site of its own, and
+# the tests run in CI, not in production.
+frontend
+e2e
+backend/tests
+backend/requirements-dev.txt
+backend/pytest.ini
+backend/export_openapi.py

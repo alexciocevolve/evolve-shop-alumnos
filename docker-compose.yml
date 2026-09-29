@@ -38,7 +38,11 @@ services:
       - "127.0.0.1:5432:5432"
 
   backend:
-    build: ./backend
+    # The context is the repository root and not ./backend, because the image has to be
+    # able to copy data/images into itself. See the note at the top of backend/Dockerfile.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://shop:${POSTGRES_PASSWORD}@db:5432/shop
       # Qué dicen los logs sobre de dónde vienen. La tienda lo estampa en cada línea, así

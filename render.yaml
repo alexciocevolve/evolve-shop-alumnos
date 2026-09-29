@@ -1,0 +1,125 @@
+# The whole shop on Render, as a file instead of as a memory of which buttons were clicked.
+#
+# Render calls this a Blueprint. It is the same idea as docker-compose.yml one directory up:
+# the services, how they find each other and what they need, written down, reviewed in a
+# pull request and recreatable by somebody who was not there the first time.
+#
+#   Render dashboard -> New -> Blueprint -> pick this repository
+#
+# Three resources, and they are NOT three of the same thing - which is the first lesson of
+# deploying something that ran happily as three containers on one laptop:
+#
+#   tienda-db    a managed database. Somebody else's job to back up and patch.
+#   tienda-api   a server process. Runs, listens on a port, can be woken and killed.
+#   tienda-web   a folder of files. After `vite build` there is no process at all.
+#
+# EVERYTHING HERE IS ON THE FREE PLAN, and the free plan has two edges worth knowing before
+# the class rather than during it:
+#   - The database EXPIRES 30 DAYS after it is created, with 14 more days of grace. In this
+#     project that is survivable - the whole catalogue is created by the migrations, so a
+#     new database is one `alembic upgrade head` away - but the orders and accounts made
+#     during the course would go. For a shop that has to stand all term, pay for Postgres.
+#   - The API goes to sleep after 15 minutes without traffic and takes about a minute to
+#     wake up. The first person to open the shop in the morning waits. Say so, or the demo
+#     looks broken.
+
+databases:
+  - name: tienda-db
+    plan: free
+    # The same major version as docker-compose.yml. A database that is one version ahead in
+    # production is a difference nobody sees until the day it explains something.
+    postgresMajorVersion: "16"
+
+services:
+  - name: tienda-api
+    type: web
+    runtime: docker
+    plan: free
+    region: frankfurt
+
+    # The context is the repository root, not backend/. That is what lets the image copy
+    # data/images into itself - and it has to, because there is no bind mount here and the
+    # free plan has no persistent disk. Without the images the API does not start at all:
+    # StaticFiles refuses a directory that does not exist.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+
+    # Render asks this address whether the service is alive, and will not send traffic to a
+    # new version until it answers. /health has existed since the first commit of the
+    # project, when it looked like it was for nothing.
+    healthCheckPath: /health
+
+    # Deploy only when the GitHub Actions checks pass. This is the line that turns the
+    # pipeline from a report into a gate: red tests do not reach production, and nobody has
+    # to be the one who remembers that.
+    autoDeployTrigger: checksPass
+
+    envVars:
+      # Handed over by Render as `postgresql://...`, which SQLAlchemy cannot use until it
+      # is told which driver to speak it with. app/config.py adds `+psycopg` on the way in,
+      # for the application AND for the migrations.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tienda-db
+          property: connectionString
+
+      # sync: false means Render ASKS for this value when the Blueprint is created.
+      # It cannot be filled in automatically: fromService hands over a hostname without a
+      # scheme, and static sites cannot be referenced that way at all. So it is typed in
+      # once, and it is the full origin of the shop:  https://tienda-web.onrender.com
+      #
+      # This is the moment an old decision pays for itself. CORS_ORIGINS became an
+      # environment variable instead of a line of Python precisely so that today is a
+      # configuration change and not a code change.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Written into every log line as service.environment. Here there is no Filebeat: Render
+      # reads the container's stdout itself and shows it under Logs in the dashboard, and
+      # the shop does not need to know, because it only ever writes to stdout. That is the
+      # design from session 24 paying off: the same JSON lines, a different collector.
+      # If they are ever sent to the same Elasticsearch as the classroom ones, this field is
+      # what keeps production out of the development dashboards.
+      - key: ENVIRONMENT
+        value: production
+
+    # NOT SET, and worth knowing why: the migration runs at start-up, inside the CMD of the
+    # Dockerfile. That is a convenience rather than a practice, and it is - with
+    # several instances they would all migrate at once. The right place is a pre-deploy
+    # command, and Render only offers one on PAID services. On free there is exactly one
+    # instance, so the convenience is also the only option; the day this moves to a paid
+    # plan, uncomment these two lines and the CMD stops migrating:
+    #
+    # preDeployCommand: alembic upgrade head
+    # dockerCommand: sh -c "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+  - name: tienda-web
+    type: web
+    runtime: static
+    rootDir: frontend
+
+    # `npm run build` is `tsc --noEmit && vite build`, so the deploy type-checks as well.
+    # A type error stops the deploy, which is where it should stop.
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+
+    autoDeployTrigger: checksPass
+
+    envVars:
+      # The address of the API, e.g. https://tienda-api.onrender.com
+      #
+      # READ THIS BEFORE CHANGING IT LATER. Vite writes this value INTO the JavaScript when
+      # it builds. It is not read when the page loads, so changing it in the dashboard does
+      # nothing until the site is BUILT again. Build-time configuration and run-time
+      # configuration look identical in a dashboard and behave nothing alike.
+      - key: VITE_API_URL
+        sync: false
+
+    # The shop is one HTML file and a router. Without this, everything works until somebody
+    # reloads the page on /cart or shares a link to /orders/5 - and gets a 404 from the CDN,
+    # which is looking for a file of that name and is quite right not to find one. The
+    # rewrite hands every address to index.html and lets the router read it.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

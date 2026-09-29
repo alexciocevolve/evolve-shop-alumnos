@@ -106,3 +106,14 @@ def test_reading_a_price_history_is_logged_with_how_many_changes_it_had(client, 
     [line] = shop_logs("product.price_history")
     assert line["shop.product_id"] == LAPTOP
     assert line["shop.price_changes_returned"] == 1
+
+
+def test_a_healthy_health_check_leaves_no_line(client, shop_logs):
+    # The container is asked every few seconds whether it is alive. Logging every "yes"
+    # would drown the lines that matter; only a failing check would be worth a line.
+    assert client.get("/health").status_code == 200
+    assert client.get("/categories").status_code == 200
+
+    paths = [line.get("url.path") for line in shop_logs()]
+    assert "/health" not in paths
+    assert "/categories" in paths

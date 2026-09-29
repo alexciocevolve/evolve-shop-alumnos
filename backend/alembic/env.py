@@ -10,15 +10,24 @@ from alembic_utils.pg_trigger import PGTrigger
 from alembic_utils.replaceable_entity import register_entities
 
 from alembic import context
+from app.config import with_driver
 from app.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-# The connection URL comes from the environment (.env), not from alembic.ini.
+# The connection URL comes from the environment (.env), not from alembic.ini. It is read
+# HERE and not imported from app/config.py, because the migration tests point Alembic at a
+# throwaway database by swapping this variable around the call: an imported constant would
+# have been frozen at import time and would have migrated the wrong database.
+#
+# What does come from app/config.py is with_driver(), so the migrations connect exactly the
+# way the application does. On a managed host the URL arrives as `postgresql://...` and has
+# to name a driver before SQLAlchemy can use it - without this, the shop would start and
+# the migrations would not.
 load_dotenv()
-config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+config.set_main_option("sqlalchemy.url", with_driver(os.environ["DATABASE_URL"]))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

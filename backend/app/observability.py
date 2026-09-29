@@ -170,6 +170,15 @@ async def log_requests(request, call_next):
         raise
 
     duration_ms = round((time.perf_counter() - started) * 1000, 1)
+
+    # A health check is not traffic. The compose healthcheck asks every 5 seconds, and a
+    # host like Render just as often, so logging each one buried everything else: for a
+    # while it was most of the lines in Kibana. Only a health check that FAILS is logged,
+    # because that one is news.
+    if request.url.path == "/health" and response.status_code == 200:
+        response.headers["X-Request-Id"] = request_id
+        return response
+
     log.info(
         f"{request.method} {request.url.path} {response.status_code}",
         extra={

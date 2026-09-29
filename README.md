@@ -127,6 +127,53 @@ cosas respecto a clase:
   corre con `ENVIRONMENT=ci`, así que cada línea lleva `service.environment: ci`: si algún día esos logs
   acabaran en algún sitio, nunca se confundirían con los de desarrollo.
 
+## Desplegar en Render
+
+`render.yaml` describe la tienda entera como **tres recursos que no son tres cosas iguales**, y esa es
+la primera lección de sacar de un portátil algo que allí eran tres contenedores:
+
+| Recurso | Qué es | Plan gratis |
+|---|---|---|
+| `tienda-db` | Una base de datos gestionada | 1 GB · **caduca a los 30 días** |
+| `tienda-api` | Un proceso que escucha en un puerto | Se duerme a los 15 min sin tráfico |
+| `tienda-web` | **Una carpeta de ficheros.** Tras `vite build` no hay proceso | — |
+
+Se despliega con **New → Blueprint** en Render, apuntando a este repositorio. Pide dos valores que no
+se pueden deducir solos (`CORS_ORIGINS` y `VITE_API_URL`), porque cada servicio necesita la URL del
+otro y esas URLs no existen hasta que se crean los servicios.
+
+**Ojo con `VITE_API_URL`:** Vite la **incrusta en el JavaScript al construir**. Cambiarla en el panel
+no hace nada hasta que el sitio se **vuelve a construir**. Configuración de construcción y
+configuración de arranque se parecen mucho en un panel y no se comportan igual.
+
+Y cuatro cosas del código existen por esto:
+
+- **Las imágenes viajan dentro de la imagen de Docker** (`COPY data/images`), por lo que el backend se
+  construye con la raíz del repositorio como contexto. Sin ellas la API **ni arranca**: `StaticFiles`
+  rechaza un directorio que no existe. En el plan gratuito no hay discos persistentes.
+- **El puerto** sale de `${PORT:-8000}`: lo elige el host.
+- **`DATABASE_URL`** llega como `postgresql://…` y `app/config.py` le pone el driver (`with_driver`).
+- **La migración sigue en el arranque.** Render solo ofrece `preDeployCommand` en planes de pago, y en
+  gratis hay exactamente una instancia, así que la comodidad de migrar al arrancar es aquí la única
+  opción. El fichero deja anotado qué descomentar el día que deje de serlo.
+
+### Los logs en Render
+
+En Render **no hay Filebeat ni Elasticsearch**, y la tienda no ha tenido que cambiar ni una línea por
+eso. Escribe JSON por la salida estándar, como siempre, y Render lee esa salida y la enseña en la
+pestaña *Logs* del servicio, donde se puede buscar por texto (`order.create`, un `trace.id`...). Es la
+decisión de la sesión 24 funcionando: la tienda no sabe quién recoge sus logs, así que cambiar de
+recolector no le afecta.
+
+Dos detalles de este checkpoint vienen de ahí:
+
+- **`ENVIRONMENT=production`** en `render.yaml`. Cada línea lleva `service.environment: production`,
+  y si algún día esos logs acaban en el mismo Elasticsearch que los de clase, ese campo es lo que evita
+  que se mezclen.
+- **Un `/health` que responde bien ya no se registra.** Render pregunta cada pocos segundos si el
+  servicio está vivo, igual que el healthcheck del compose, y cada «sí» era una línea: en Kibana eran la
+  mayoría. Un `/health` que **falla** sí se registra, porque ese sí es noticia.
+
 ## El contrato de la API (`openapi.json`)
 
 FastAPI **genera** el documento OpenAPI a partir del código: recorre las rutas y lee las firmas, los
@@ -356,6 +403,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp19-price-history-table-ui` | `004a_price_trigger` | El histórico en el modal, pedido solo al abrirlo; el contrato OpenAPI en el repositorio, y por qué en desarrollo algunos logs salen dobles | hecho |
 | `chkp20-price-history-ui` | `004a_price_trigger` | El histórico dibujado como gráfica, con el eje recortado a la vista. Mismos datos, mismo log (`product.price_history`) | hecho |
 | `chkp21-deploy-pipeline` | `004a_price_trigger` | GitHub Actions ejecuta en cada push todo lo que se comprobaba a mano, incluida la configuración de Filebeat | hecho |
+| `chkp22-deploy-render` | `004a_price_trigger` | La tienda descrita para Render en `render.yaml`; allí los logs los recoge Render, no Filebeat | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
