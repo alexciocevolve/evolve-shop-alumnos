@@ -157,7 +157,47 @@ está deprecado en FastAPI: el mensaje `shop started` ahora sale de `lifespan`, 
 `shop stopped` al parar. Dos `shop started` seguidos sin un `shop stopped` en medio significan que el
 servidor no se paró: se cayó o lo mataron.
 
-> **Lo que todavía no está cubierto:** los tests del frontend (`vitest`), que son el último trozo del cp4.
+### Frontend
+
+```bash
+cd frontend && npm install && npm test
+```
+
+Con `vitest` y Testing Library, sobre `jsdom`. **Ninguno toca la red**: cada test dice lo que responde la
+API, así que un fallo siempre habla de este código y nunca de que la tienda esté caída, lenta o con datos
+de otra persona.
+
+Son pocos y elegidos. Se prueba comportamiento, nunca la forma: no hay tests de `formatPrice` ni del
+`Header`, porque no tienen forma de romperse en silencio.
+
+| Rompe esto | Debe fallar |
+|---|---|
+| Hacer controlado el campo de contraseña | Los dos tests de que la contraseña no acaba en el HTML |
+| `setItems(page.items)` en vez de concatenar | El test de que cada página se **añade** a las anteriores |
+| Quitar la comprobación de `generation` | El test de la respuesta que llega tarde |
+| Quitar `!user \|\| !shippingAddress` del botón | Los dos tests del botón de comprar bloqueado |
+| Mandar `reportProductView` desde un `useEffect` del modal | El test de que abrir un producto avisa **una** vez |
+| Quitar el `.catch(() => {})` de `reportProductView` | El test de que un aviso fallido no molesta al cliente |
+
+El primero existe porque **ese fallo fue real**: con un `<input value={...}>` controlado, React escribe el
+texto en el **atributo** `value`, y entonces cualquier cosa que serialice el DOM se lleva la contraseña en
+claro.
+
+Los dos últimos prueban la única pieza de observabilidad que vive en el navegador: el aviso de que se ha
+abierto un producto ([`src/api.test.ts`](frontend/src/api.test.ts) y el último test de
+[`Catalog.test.tsx`](frontend/src/pages/Catalog.test.tsx)). El de StrictMode importa porque StrictMode
+ejecuta cada efecto dos veces mientras se desarrolla: si el aviso saliera de un efecto, cada visita
+contaría doble en Kibana.
+
+> `jsdom` no tiene maquetación, así que no sabe qué se ve y no trae `IntersectionObserver`. El doble está
+> en [`src/setupTests.ts`](frontend/src/setupTests.ts) y avisa de «visible» en cuanto se observa algo, que
+> es lo que hace un navegador de verdad cuando el elemento ya está a la vista. Por eso, en los tests, el
+> catálogo se comporta como en una pantalla alta: sigue pidiendo páginas hasta que el servidor dice que no
+> hay más. El doble también respeta `disconnect()`, como el de verdad; sin eso, el test con StrictMode
+> cargaba la misma página dos veces y enseñaba cada producto repetido.
+
+> **Lo que todavía no está:** tests de extremo a extremo. Los de aquí prueban el frontend contra una API
+> simulada y el backend contra una base de datos de verdad, pero nada recorre la tienda entera de una vez.
 
 ## Checkpoints
 
@@ -176,6 +216,7 @@ servidor no se paró: se cayó o lo mataron.
 | `chkp11-show-orders` | `003c_orders_user` | Sin sesión no se compra, cada pedido tiene dueño y solo él lo ve | hecho |
 | `chkp12-backend-unittest` | ninguna | Tests de los servicios contra una base de datos de pruebas, y tests de lo que los logs no pueden contar | hecho |
 | `chkp13-backend-integration` | ninguna | Tests de la API, de la carrera por la última unidad, de las migraciones y de los logs que escriben las rutas | hecho |
+| `chkp14-frontend-tests` | ninguna | Tests del frontend sin red, incluido el aviso de producto abierto | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
