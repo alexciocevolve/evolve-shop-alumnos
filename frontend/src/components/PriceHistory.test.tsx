@@ -37,12 +37,36 @@ describe("PriceHistory", () => {
     // The whole point of the chart. On an axis starting at zero, a hundred euros off an
     // eight-hundred-euro laptop is a flat line: true and useless. The axis runs between the
     // lowest and highest price this product ever had.
-    expect(await screen.findByText(/€799.00.*€899.00.*not from zero/)).toBeInTheDocument();
+    //
+    // Queried by the sentence and asserted on its text content, because the two prices sit
+    // in elements of their own so they can be coloured: getByText only sees an element's
+    // OWN text nodes, and would not find a number wrapped in a child.
+    const note = await screen.findByText(/not from zero/);
+    expect(note).toHaveTextContent("€799.00");
+    expect(note).toHaveTextContent("€899.00");
 
     // And the price of that decision is that it exaggerates, so the chart has to admit its
     // scale rather than let a reader assume the usual one. This is the test that fails if
     // somebody draws the line without the caption underneath it.
     expect(screen.queryByText(/€0.00/)).not.toBeInTheDocument();
+  });
+
+  it("picks out the cheapest and the dearest it has ever been", async () => {
+    vi.mocked(getPriceHistory).mockResolvedValue([
+      change(89900, 84900, "2026-09-01T10:00:00+00:00"),
+      change(84900, 79900, "2026-09-19T10:00:00+00:00"),
+    ]);
+
+    render(<PriceHistory productId={1} />);
+
+    // Two points out of the five on the line are the ones somebody came to find out, and
+    // they are marked apart from the rest. The <title> on each is what a hovering mouse
+    // gets, so asserting on it tests the thing that is actually offered.
+    //
+    // findByText and not findByTitle: Testing Library's title query looks for `svg > title`,
+    // a DIRECT child of the svg, and these hang off the circles they describe.
+    expect(await screen.findByText("Lowest price: €799.00")).toBeInTheDocument();
+    expect(screen.getByText("Highest price: €899.00")).toBeInTheDocument();
   });
 
   it("gives the chart a name, because a picture on its own says nothing out loud", async () => {

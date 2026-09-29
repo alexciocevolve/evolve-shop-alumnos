@@ -293,46 +293,125 @@ main {
 }
 
 .price-history h3 {
-  margin: 0 0 8px;
-  font-family: var(--heading-font);
-  font-size: 1rem;
+  margin: 0 0 4px;
+  font-size: 0.75rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
+/* The scale note belongs to the chart above it, not to the section below. */
+.price-history .price-history-note {
+  padding: 4px 0 0;
+  font-size: 0.8rem;
+}
+
+/* The viewBox is authored at the size this is drawn, so every length below is in the
+   pixels it will actually be. When the viewBox was small and stretched, a stroke of 1.5
+   arrived as 3 and a label of 9px as 18px, and no amount of colour fixed that. */
 .price-chart {
+  display: block;
   width: 100%;
   height: auto;
-  overflow: visible;
 }
 
 /* The near-black of evolve.es, like every other thing that asks to be looked at */
 .price-chart-line {
   fill: none;
   stroke: var(--dark);
-  stroke-width: 1.5;
+  stroke-width: 2.5;
   stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
+/* The area under the line, fading out downwards. A bare polyline on a wide white box looks
+   like something unfinished; the fill gives the staircase a body instead of an outline. */
+.price-chart-area {
+  stroke: none;
+}
+
+.price-chart-fade-top {
+  stop-color: var(--dark);
+  stop-opacity: 0.16;
+}
+
+.price-chart-fade-bottom {
+  stop-color: var(--dark);
+  stop-opacity: 0;
+}
+
+/* Hollow, so a dot sitting on the filled area still reads as a point on the line and not
+   as a blob of the same colour. */
 .price-chart-dot {
-  fill: var(--dark);
+  fill: #fff;
+  stroke: var(--dark);
+  stroke-width: 2;
 }
 
 .price-chart-grid {
   stroke: var(--border);
   stroke-width: 1;
-  stroke-dasharray: 3 3;
+  stroke-dasharray: 2 4;
 }
 
 .price-chart-tick {
-  font-size: 9px;
+  font-size: 12px;
   fill: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* The two prices worth naming, and the same colours as the shop's own badges: green is
+   what a buyer wants, red is what they do not. The axis number and the point where the
+   price first reached it are coloured together, which is what lets the pair be read
+   without a legend. */
+.price-chart-tick-low {
+  fill: #067647;
+  color: #067647; /* reused on the <b> elements in the note under the chart */
+  font-weight: 600;
+}
+
+.price-chart-tick-high {
+  fill: var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.price-chart-grid-low {
+  stroke: #067647;
+  opacity: 0.35;
+}
+
+.price-chart-grid-high {
+  stroke: var(--danger);
+  opacity: 0.35;
+}
+
+/* Solid, against the hollow dots of every other change: these two are the answer to
+   "is this a good price?", so they are allowed to be louder than the rest. */
+.price-chart-mark {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.price-chart-mark-low {
+  fill: #067647;
+}
+
+.price-chart-mark-high {
+  fill: var(--danger);
 }
 
 /* Out of sight, still in the page and still read aloud. display:none or visibility:hidden
    would take it out of the accessibility tree too, which is the opposite of the point. */
 .visually-hidden {
   position: absolute;
+  /* Pinned to the top corner. A <table> will not shrink below its content whatever height
+     it is given, so the hidden price table stayed 200px tall where it sat, under the chart,
+     and stretched the modal into an empty scroll. Up here it overlaps what is already
+     there and stretches nothing. */
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   margin: -1px;

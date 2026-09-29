@@ -430,6 +430,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp21-deploy-pipeline` | `004a_price_trigger` | GitHub Actions ejecuta en cada push todo lo que se comprobaba a mano, incluida la configuración de Filebeat | hecho |
 | `chkp22-deploy-render` | `004a_price_trigger` | La tienda descrita para Render en `render.yaml`; allí los logs los recoge Render, no Filebeat | hecho |
 | `chkp23-deploy-render-same-region` | `004a_price_trigger` | La base de datos y la API en la misma región, y la tienda diciendo al arrancar si llega a su base de datos | hecho |
+| `chkp24-ask-user-feedback` | `004a_price_trigger` | La gráfica rehecha tras enseñarla: el precio más bajo y el más alto marcados; la regla de «sin clases» deja de saltar con prosa | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 

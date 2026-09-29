@@ -1,5 +1,5 @@
 import { getPriceHistory, type PriceChange } from "../api";
-import { formatDate, formatPrice } from "../format";
+import { formatDate, formatDay, formatPrice, formatTime } from "../format";
 import { useData } from "../useData";
 
 // The price history of ONE product, asked for when this component appears.
@@ -17,14 +17,19 @@ import { useData } from "../useData";
 // because only one product's history is ever on screen. "Batch it" and "do not ask for it"
 // are both answers to N+1; which one is right depends on how much of it gets looked at.
 
-const WIDTH = 320;
-const HEIGHT = 110;
-const PAD = { left: 52, right: 10, top: 10, bottom: 22 };
+// Roughly the size in pixels this is drawn at inside the modal, and that is the point. An
+// SVG with a small viewBox stretched to fill a wide box magnifies EVERYTHING in it, text
+// and stroke widths included. The first version was authored at 320x110, drawn at about
+// 600 wide, and every 9px label came out at 18px - a small diagram wearing the lettering
+// of a poster, which is what made it look wrong long before anybody could say why.
+// Authoring at the size it is shown means a font-size of 12 is 12.
+const WIDTH = 640;
+const HEIGHT = 190;
+const PAD = { left: 68, right: 16, top: 18, bottom: 34 };
 
-// How much room to leave above the highest price and below the lowest, as a share of the
-// range they span. Without it the line would touch the edges of the box and the first and
-// last points would be half cut off.
-const BREATHING_ROOM = 0.15;
+// Room above the highest price and below the lowest, as a share of the range they span, so
+// the line never touches the edge of the box and the end points are not half cut off.
+const BREATHING_ROOM = 0.18;
 
 type Point = { x: number; cents: number };
 
@@ -68,7 +73,7 @@ function scale(history: PriceChange[]) {
     { x: at(index), cents: change.price_cents },
   ]);
 
-  return { points, lowest, highest, bottom, top, firstDate: times[0], lastDate: times.at(-1)! };
+  return { points, at, lowest, highest, bottom, top };
 }
 
 export default function PriceHistory({ productId }: { productId: number }) {
@@ -92,14 +97,32 @@ export default function PriceHistory({ productId }: { productId: number }) {
     return <p className="price-history-note">This product has not changed price yet.</p>;
   }
 
-  const { points, lowest, highest, bottom, top, firstDate, lastDate } = scale(state.data);
+  const { points, at, lowest, highest, bottom, top } = scale(state.data);
   const x = (share: number) => PAD.left + share * (WIDTH - PAD.left - PAD.right);
   const y = (cents: number) =>
     PAD.top + (1 - (cents - bottom) / (top - bottom)) * (HEIGHT - PAD.top - PAD.bottom);
 
   const line = points.map((point) => `${x(point.x)},${y(point.cents)}`).join(" ");
-  const paid = state.data.at(-1)!.price_cents;
+  // The same outline, closed down to the floor of the plot. A bare line on a wide white box
+  // reads as an afterthought; the area under it gives the shape something to be the edge of.
+  const last = points[points.length - 1].cents;
+  const area = `${x(0)},${y(bottom)} ${line} ${x(1)},${y(last)} ${x(1)},${y(bottom)}`;
+  const floor = HEIGHT - PAD.bottom;
+  // Unique per product: two charts on one page would otherwise share one gradient.
+  const fadeId = `price-fade-${productId}`;
+
   const started = state.data[0].previous_price_cents;
+  const ended = state.data[state.data.length - 1];
+
+  // Both ends of the axis say the date - unless every change happened on the same day, in
+  // which case printing it twice says nothing twice, and the clock is what tells them
+  // apart. It is the ordinary case in a classroom: somebody changes a price three times
+  // in one session, and the chart would otherwise read "20 Sept 2026 … 20 Sept 2026".
+  // The left end carries the date either way; only the right end changes, so the pair
+  // reads "20 Sept 2026, 21:11 … 23:38" instead of the same date printed twice.
+  const sameDay = formatDay(state.data[0].changed_at) === formatDay(ended.changed_at);
+  const firstLabel = sameDay ? formatDate(state.data[0].changed_at) : formatDay(state.data[0].changed_at);
+  const lastLabel = sameDay ? formatTime(ended.changed_at) : formatDay(ended.changed_at);
 
   return (
     <section className="price-history">
@@ -112,40 +135,107 @@ export default function PriceHistory({ productId }: { productId: number }) {
         // reader announces a pile of meaningless shapes. The table below says the rest.
         role="img"
         aria-label={
-          `Price from ${formatPrice(started)} to ${formatPrice(paid)} over ` +
+          `Price from ${formatPrice(started)} to ${formatPrice(ended.price_cents)} over ` +
           `${state.data.length} ${state.data.length === 1 ? "change" : "changes"}, ` +
           `between ${formatDate(state.data[0].changed_at)} and ` +
-          `${formatDate(state.data.at(-1)!.changed_at)}.`
+          `${formatDate(ended.changed_at)}.`
         }
       >
+        <defs>
+          <linearGradient id={fadeId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" className="price-chart-fade-top" />
+            <stop offset="100%" className="price-chart-fade-bottom" />
+          </linearGradient>
+        </defs>
+
         {/* The two prices that bound the drawing, so the numbers are readable without
             counting pixels - and so the truncated axis cannot be mistaken for one that
             starts at zero. */}
-        <text className="price-chart-tick" x={PAD.left - 6} y={y(highest) + 3} textAnchor="end">
-          {formatPrice(highest)}
-        </text>
-        <text className="price-chart-tick" x={PAD.left - 6} y={y(lowest) + 3} textAnchor="end">
-          {formatPrice(lowest)}
-        </text>
-        <line className="price-chart-grid" x1={PAD.left} x2={WIDTH - PAD.right} y1={y(highest)} y2={y(highest)} />
-        <line className="price-chart-grid" x1={PAD.left} x2={WIDTH - PAD.right} y1={y(lowest)} y2={y(lowest)} />
-
-        <polyline className="price-chart-line" points={line} />
-        {points.map((point, index) => (
-          <circle key={index} className="price-chart-dot" cx={x(point.x)} cy={y(point.cents)} r="2" />
+        {[
+          { cents: highest, kind: "high" },
+          { cents: lowest, kind: "low" },
+        ].map(({ cents, kind }) => (
+          <g key={cents}>
+            <line
+              className={`price-chart-grid price-chart-grid-${kind}`}
+              x1={PAD.left}
+              x2={WIDTH - PAD.right}
+              y1={y(cents)}
+              y2={y(cents)}
+            />
+            {/* The number is coloured, and so is the point where the price first reached
+                it. That pairing is the whole trick: the eye ties the figure on the axis to
+                the moment it happened, without a legend and without another label on top
+                of the drawing. */}
+            <text
+              className={`price-chart-tick price-chart-tick-${kind}`}
+              x={PAD.left - 12}
+              y={y(cents) + 4}
+              textAnchor="end"
+            >
+              {formatPrice(cents)}
+            </text>
+          </g>
         ))}
 
-        <text className="price-chart-tick" x={PAD.left} y={HEIGHT - 6}>
-          {formatDate(new Date(firstDate).toISOString())}
+        <polygon className="price-chart-area" points={area} fill={`url(#${fadeId})`} />
+        <polyline className="price-chart-line" points={line} />
+
+        {/* One dot per change, at the price it moved TO - not two, which is what the pair
+            of points behind each step gives and which doubled the clutter for nothing. */}
+        {state.data.map((change, index) => (
+          <circle
+            key={`${change.changed_at}-${change.price_cents}`}
+            className="price-chart-dot"
+            cx={x(at(index))}
+            cy={y(change.price_cents)}
+            r="3.5"
+          >
+            {/* A native tooltip: no JavaScript and no library, and it puts the exact
+                figures within reach without crowding the picture with them. */}
+            <title>
+              {`${formatDate(change.changed_at)}: ${formatPrice(change.previous_price_cents)} → ${formatPrice(change.price_cents)}`}
+            </title>
+          </circle>
+        ))}
+
+        {/* The cheapest and the dearest this product has ever been, marked where they
+            happened. They are the two points somebody actually came to find out - "is this
+            a good price?" is answered by where today sits between them - so they are solid
+            and coloured while every other change is a hollow dot. Guarded because a row
+            whose two prices are equal would make the range collapse. */}
+        {lowest !== highest &&
+          [
+            { cents: lowest, kind: "low", name: "Lowest" },
+            { cents: highest, kind: "high", name: "Highest" },
+          ].map(({ cents, kind, name }) => {
+            // Where it FIRST reached that price, which is the moment worth pointing at.
+            const reached = points.find((point) => point.cents === cents)!;
+            return (
+              <circle
+                key={kind}
+                className={`price-chart-mark price-chart-mark-${kind}`}
+                cx={x(reached.x)}
+                cy={y(cents)}
+                r="5"
+              >
+                <title>{`${name} price: ${formatPrice(cents)}`}</title>
+              </circle>
+            );
+          })}
+
+        <text className="price-chart-tick" x={PAD.left} y={floor + 22}>
+          {firstLabel}
         </text>
-        <text className="price-chart-tick" x={WIDTH - PAD.right} y={HEIGHT - 6} textAnchor="end">
-          {formatDate(new Date(lastDate).toISOString())}
+        <text className="price-chart-tick" x={WIDTH - PAD.right} y={floor + 22} textAnchor="end">
+          {lastLabel}
         </text>
       </svg>
 
       <p className="price-history-note">
-        Vertical axis {formatPrice(lowest)}–{formatPrice(highest)}, not from zero, so small
-        changes stay visible.
+        Lowest <b className="price-chart-tick-low">{formatPrice(lowest)}</b> · Highest{" "}
+        <b className="price-chart-tick-high">{formatPrice(highest)}</b> — axis not from
+        zero, so small changes stay visible.
       </p>
 
       {/* The same numbers, out of sight but still in the page. A chart is unreadable to a

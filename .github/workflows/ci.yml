@@ -37,8 +37,20 @@ jobs:
       - name: No classes in the frontend
         # grep exits 1 when it finds nothing, which is the outcome we want, so the test is
         # inverted on purpose: finding something is the failure.
+        #
+        # Narrower than it was first written, and the reason is worth keeping. The
+        # plain `grep -rn "class " frontend/src` failed on its second real run - against a
+        # CSS COMMENT containing the word "class". No class had been written; the rule had
+        # simply read some prose in a stylesheet.
+        #
+        # That is not a small thing. A check that cries wolf is a check people learn to
+        # click past, and a rule everybody ignores is worse than no rule, because it still
+        # costs a red build and now buys nothing. So this looks only at TypeScript, where
+        # a class could actually exist, and only at a line that DECLARES one: mentioning
+        # the word in a sentence no longer counts, and `className` never did.
         run: |
-          if grep -rn "class " frontend/src; then
+          if grep -rnE "^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(abstract[[:space:]]+)?class[[:space:]]" \
+              --include="*.ts" --include="*.tsx" frontend/src; then
             echo "::error::frontend/src is written with functions and hooks, not classes."
             exit 1
           fi
