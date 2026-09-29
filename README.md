@@ -210,7 +210,7 @@ cd e2e && ../backend/.venv/Scripts/python -m pytest
 
 Si la tienda no está arrancada, se saltan con un mensaje que lo dice, en vez de fallar quince veces.
 
-Son **17 y hablan solo HTTP y SQL**: no hay navegador. La regla que los define está en
+Son **18 y hablan solo HTTP y SQL**: no hay navegador. La regla que los define está en
 [`e2e/conftest.py`](e2e/conftest.py) y conviene leerla antes que los tests:
 
 > **Ninguno importa la aplicación.** Ni un solo `from app import ...`.
@@ -239,6 +239,8 @@ ve nadie desde dentro de la tienda.
   de HTTP y la de `categories.list`, y con números que siguen siendo números.
 - El segundo busca en **todos los campos de todas las líneas** el correo y la contraseña del cliente de
   prueba, y la contraseña equivocada con la que se intenta entrar. No puede aparecer ninguno.
+- El tercero cambia un precio **directamente con SQL**, sin pasar por la tienda, y espera a ver en
+  Elasticsearch la línea que escribe el trigger (ver [Lo que la base de datos cuenta sola](#lo-que-la-base-de-datos-cuenta-sola)).
 
 Esperan hasta 60 segundos, porque Filebeat envía por lotes y una línea tarda unos segundos en llegar.
 Si Elasticsearch no está levantado, **se saltan** en vez de fallar: no es parte de la tienda, y que la
@@ -251,9 +253,9 @@ en `.env`.
 |---|---|---|---|
 | Backend | 139 | Las reglas: stock, precios, propiedad, migraciones, y lo que dicen los logs | Rápido y señala la línea |
 | Frontend | 27 | Los comportamientos que se rompen en silencio | Rápido |
-| Extremo a extremo | 17 | Que las piezas están conectadas, y que los logs llegan | Lento, y dice «algo falla» sin decir dónde |
+| Extremo a extremo | 18 | Que las piezas están conectadas, y que los logs llegan | Lento, y dice «algo falla» sin decir dónde |
 
-Cuanto más se sube en la tabla, más lentos y más vagos son los mensajes. Por eso arriba hay diecisiete y no
+Cuanto más se sube en la tabla, más lentos y más vagos son los mensajes. Por eso arriba hay dieciocho y no
 doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**.
 
 ## Checkpoints
@@ -276,6 +278,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp14-frontend-tests` | ninguna | Tests del frontend sin red, incluido el aviso de producto abierto | hecho |
 | `chkp15-e2e-test` | ninguna | Tests de extremo a extremo por HTTP contra la tienda en marcha, y que los logs llegan a Elasticsearch sin secretos | hecho |
 | `chkp16-price-history` | `004_price_history` | La tabla del histórico de precios, vacía: todavía nada la rellena ni la lee, así que no hay nada que registrar | hecho |
+| `chkp17-price-history-trigger` | `004a_price_trigger` | Un trigger rellena el histórico, y deja su propia línea en el log de PostgreSQL | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -665,6 +668,37 @@ El servidor solo puede apuntar lo que le llega. Abrir el detalle de un producto 
 Por eso el navegador hace un `POST /products/{id}/views` al abrirlo. Es lo mismo que hace cualquier
 web con sus estadísticas: la página avisa de lo que ocurre en la pantalla, porque el servidor no
 lo ve. Si ese aviso falla, el cliente no se entera y la tienda sigue funcionando.
+
+### Lo que la base de datos cuenta sola
+
+Desde `004a_price_trigger`, un cambio de precio lo registra un **trigger** de PostgreSQL. Eso tiene un
+problema para los logs: si alguien cambia un precio desde psql, la tienda no se entera, porque no pasa
+por su código, y no tiene nada que contar. El único que lo ve es el trigger.
+
+Así que el trigger escribe su propia línea con `RAISE LOG`:
+
+```text
+LOG:  price change in shop: product 7 from 13900 to 13901 cents
+```
+
+Va al log de PostgreSQL, que sale por la salida del contenedor `db`, y Filebeat ya lee todos los
+contenedores del proyecto. Llega a Kibana junto a las líneas de la tienda. Para verla:
+
+```bash
+docker compose exec db psql -U shop -d shop -c "UPDATE products SET price_cents = price_cents + 1 WHERE id = 7"
+```
+
+y en Kibana, `message: "price change"`. Tres cosas que mirar en esa línea:
+
+- **Llega como texto, no como campos.** PostgreSQL no escribe JSON, así que Filebeat no ha podido
+  separarla y lo dice en `error.message`. El producto y los precios están dentro de una frase: para
+  sumarlos o filtrarlos habría que partir el texto. Es la comparación directa con las líneas de la tienda,
+  y la razón de que la tienda escriba JSON.
+- **Dice de qué base de datos viene** (`in shop`). El log de PostgreSQL es uno para todo el servidor, y
+  los tests también cambian precios, en `shop_test`. Sin el nombre, sus líneas serían iguales que las de
+  verdad.
+- **Quien hace el `UPDATE` no ve nada.** `LOG` es un nivel solo para el log del servidor; psql no lo
+  enseña.
 
 ### Dos streams, dos audiencias
 

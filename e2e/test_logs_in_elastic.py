@@ -13,26 +13,31 @@ import secrets
 import time
 
 import pytest
+from sqlalchemy import text
 
 PATIENCE_SECONDS = 60
 
 
-def logged_with(elastic, trace_id: str, expected: int) -> list[dict]:
-    """The lines of one request, as stored in Elasticsearch, once `expected` have arrived."""
+def wait_for(elastic, query: dict, expected: int) -> list[dict]:
+    """The lines that match `query`, as stored in Elasticsearch, once `expected` have arrived."""
     deadline = time.monotonic() + PATIENCE_SECONDS
     while True:
         hits = elastic.post(
-            "/logs-shop-evolve/_search",
-            json={"size": 50, "query": {"term": {"trace.id": trace_id}}},
+            "/logs-shop-evolve/_search", json={"size": 50, "query": query}
         ).json()["hits"]["hits"]
         if len(hits) >= expected:
             return [hit["_source"] for hit in hits]
         if time.monotonic() > deadline:
             pytest.fail(
-                f"After {PATIENCE_SECONDS} s only {len(hits)} of {expected} lines with "
-                f"trace.id {trace_id} are in Elasticsearch. Is Filebeat running?"
+                f"After {PATIENCE_SECONDS} s only {len(hits)} of {expected} lines matching "
+                f"{query} are in Elasticsearch. Is Filebeat running?"
             )
         time.sleep(2)
+
+
+def logged_with(elastic, trace_id: str, expected: int) -> list[dict]:
+    """The lines of one request, once `expected` of them have arrived."""
+    return wait_for(elastic, {"term": {"trace.id": trace_id}}, expected)
 
 
 def test_a_request_reaches_elasticsearch_with_its_id_and_its_fields(api, elastic):
@@ -78,3 +83,25 @@ def test_what_a_customer_types_as_a_secret_never_reaches_elasticsearch(api, elas
             json={"query": {"multi_match": {"query": secret, "type": "phrase", "lenient": True}}},
         ).json()["count"]
         assert found == 0, f"{secret!r} is in Elasticsearch {found} time(s)"
+
+
+def test_a_price_changed_behind_the_shops_back_still_shows_up(elastic, database, product):
+    # Straight into the database, the way somebody fixes a price from psql. No request, so
+    # the shop writes nothing: the only witness is the trigger, which records the change
+    # in product_price_history AND writes a line to PostgreSQL's own log (RAISE LOG).
+    with database.begin() as connection:
+        connection.execute(
+            text("UPDATE products SET price_cents = price_cents + 1 WHERE id = :id"),
+            {"id": product["id"]},
+        )
+
+    expected = (
+        f"price change in shop: product {product['id']} "
+        f"from {product['price_cents']} to {product['price_cents'] + 1} cents"
+    )
+    [line] = wait_for(elastic, {"match_phrase": {"message": expected}}, expected=1)
+    # It arrives, but as plain text: PostgreSQL does not write JSON, so Filebeat could not
+    # turn it into fields and says so. Compare it with the shop's own lines above, where
+    # every value is a field that can be filtered and added up.
+    assert line["container"]["name"].endswith("-db-1")
+    assert "error" in line

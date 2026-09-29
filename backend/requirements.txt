@@ -2,6 +2,9 @@ fastapi==0.141.1
 uvicorn[standard]==0.53.0
 sqlalchemy==2.0.54
 alembic==1.20.0
+# Teaches --autogenerate about objects that are not tables: functions, triggers, views and
+# policies. Without it, a migration that adds a trigger comes out empty (see 004a).
+alembic-utils==0.8.8
 psycopg[binary]==3.3.6
 pydantic[email]==2.13.5
 python-dotenv==1.2.3

@@ -48,6 +48,11 @@ class Product(Base):
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id", name="fk_products_category_id"), index=True
     )
+    # CAREFUL: changing this column fires a database trigger. Every UPDATE that really
+    # changes the price writes a row into product_price_history, and no Python code is
+    # involved - see revision 004a_price_trigger. This comment is here because a trigger is
+    # code that runs where nobody is looking: somebody wondering where those rows come from
+    # will open this file long before they think to open a migration.
     price_cents: Mapped[int]  # cents, never float
     stock: Mapped[int] = mapped_column(server_default="0")
     image_url: Mapped[str] = mapped_column(Text)

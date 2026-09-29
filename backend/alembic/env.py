@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
+from alembic_utils.pg_function import PGFunction
+from alembic_utils.pg_trigger import PGTrigger
+from alembic_utils.replaceable_entity import register_entities
+
 from alembic import context
 from app.models import Base
 
@@ -28,6 +32,45 @@ if config.config_file_name is not None:
 # The models are the source of truth: `--autogenerate` compares this metadata
 # with the real database and writes the difference as a migration.
 target_metadata = Base.metadata
+
+# And here is the second source of truth, which exists because Base.metadata cannot hold
+# everything a PostgreSQL database contains. A function and a trigger are not tables, not
+# columns and not constraints, so they are nowhere in the models - which is why plain
+# autogenerate produced an empty migration for revision 004a and why the drift check said
+# "no changes" with the trigger deleted.
+#
+# alembic_utils adds a second comparison. These objects are declared here, it asks the
+# database what it really has, and the difference goes into the migration like any other.
+
+record_price_change = PGFunction(
+    schema="public",
+    signature="record_price_change()",
+    definition="""
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO product_price_history (product_id, previous_price_cents, price_cents)
+        VALUES (NEW.id, OLD.price_cents, NEW.price_cents);
+        RAISE LOG 'price change in %: product % from % to % cents',
+            current_database(), NEW.id, OLD.price_cents, NEW.price_cents;
+        RETURN NEW;
+    END;
+    $$
+    """,
+)
+
+trg_products_price_change = PGTrigger(
+    schema="public",
+    signature="trg_products_price_change",
+    on_entity="public.products",
+    definition="""
+    AFTER UPDATE OF price_cents ON public.products
+    FOR EACH ROW
+    WHEN (OLD.price_cents IS DISTINCT FROM NEW.price_cents)
+    EXECUTE FUNCTION record_price_change()
+    """,
+)
+
+register_entities([record_price_change, trg_products_price_change])
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

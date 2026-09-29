@@ -98,8 +98,18 @@ def test_the_models_and_the_migrated_schema_say_the_same_thing(at_head):
     # If somebody changes a model and forgets the migration, it shows up here instead of
     # at the next deployment. This is the `--autogenerate` drift check, asked of Alembic
     # directly rather than by generating a file and reading it.
+    #
+    # include_schemas is here because of alembic_utils, and the story is worth keeping.
+    # Installing it BROKE this test with KeyError: 'include_schemas' - its comparator reads
+    # an option that Alembic sets when it runs through env.py and that this test, which
+    # calls compare_metadata() itself, was not passing. Adding it is also the upgrade: with
+    # the option set, this check now covers the function and the trigger registered in
+    # env.py as well as the tables, so a trigger deleted straight from the database is a
+    # failure here instead of the silence it used to be.
     with at_head.connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(
+            connection, opts={"compare_type": True, "include_schemas": False}
+        )
         differences = compare_metadata(context, Base.metadata)
 
     assert differences == [], f"the models have drifted from the migrations: {differences}"
