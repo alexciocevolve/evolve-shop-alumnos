@@ -279,6 +279,7 @@ doscientos: aquí solo va lo que **no se puede comprobar de ninguna otra forma**
 | `chkp15-e2e-test` | ninguna | Tests de extremo a extremo por HTTP contra la tienda en marcha, y que los logs llegan a Elasticsearch sin secretos | hecho |
 | `chkp16-price-history` | `004_price_history` | La tabla del histórico de precios, vacía: todavía nada la rellena ni la lee, así que no hay nada que registrar | hecho |
 | `chkp17-price-history-trigger` | `004a_price_trigger` | Un trigger rellena el histórico, y deja su propia línea en el log de PostgreSQL | hecho |
+| `chkp18-price-history-api` | `004a_price_trigger` | `GET /products/{id}/price-history`: el histórico por HTTP, `404` si no hay producto y `[]` si nunca cambió | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -623,6 +624,7 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `catalogue.list` | info | `GET /products` | `shop.category`, `shop.products_returned`, `shop.product_ids`, `shop.cursor`, `shop.has_next_page` |
 | `product.view` | info | `GET /products/{id}` y `POST /products/{id}/views` | `shop.view_source` (`api` o `modal`), `shop.product_id`, `shop.product_name`, `shop.category`, `shop.price_cents`, `shop.stock` |
 | `product.miss` | warning | `GET /products/{id}` que no existe | `shop.product_id` |
+| `product.price_history` | info | `GET /products/{id}/price-history` | `shop.product_id`, `shop.price_changes_returned` |
 | `categories.list` | info | `GET /categories` | `shop.categories_returned`, `shop.category_names` |
 | `startup` / `shutdown` | info | El servidor arranca / se para limpiamente | — |
 | `categories.empty` | warning | `GET /categories` sin ninguna categoría | — |

@@ -7,6 +7,8 @@ request bodies, which is exactly where they slip into a log by accident.
 
 import json
 
+from sqlalchemy import text
+
 LAPTOP = 1
 
 
@@ -93,3 +95,14 @@ def test_registering_signing_in_and_out_leaves_no_password_token_or_email(client
     everything = json.dumps(shop_logs())
     for secret in (credentials["password"], token, credentials["email"]):
         assert secret not in everything
+
+
+def test_reading_a_price_history_is_logged_with_how_many_changes_it_had(client, db, shop_logs):
+    # Straight into the table, like a price fixed from psql: the trigger adds the history row.
+    db.execute(text("UPDATE products SET price_cents = price_cents + 1 WHERE id = :id"), {"id": LAPTOP})
+
+    assert len(client.get(f"/products/{LAPTOP}/price-history").json()) == 1
+
+    [line] = shop_logs("product.price_history")
+    assert line["shop.product_id"] == LAPTOP
+    assert line["shop.price_changes_returned"] == 1

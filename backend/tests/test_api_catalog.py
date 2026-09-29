@@ -74,6 +74,38 @@ def test_the_categories_endpoint_is_a_plain_list(client):
     ]
 
 
+def test_a_product_with_no_price_changes_answers_an_empty_list_and_not_a_404(client):
+    # The decision this endpoint exists to demonstrate. The product is there and its price
+    # has never changed: an empty collection is a true, complete answer, so 200.
+    response = client.get("/products/1/price-history")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_a_product_that_does_not_exist_answers_404_and_not_an_empty_list(client):
+    # The other half, and it only means something next to the test above. Answering [] here
+    # would tell a caller who mistyped an id that this product has never changed price.
+    response = client.get("/products/999999/price-history")
+
+    assert response.status_code == 404
+
+
+def test_the_history_over_http_is_a_decision_and_not_the_table(client, db):
+    from sqlalchemy import text
+
+    db.execute(text("UPDATE products SET price_cents = 12345 WHERE id = 1"))
+
+    entry = client.get("/products/1/price-history").json()[0]
+
+    assert set(entry) == {"changed_at", "previous_price_cents", "price_cents"}
+    assert entry["price_cents"] == 12345
+    # No product_id and no row id: the caller named the product in the address and has no
+    # use for the primary key of a history row.
+    assert "product_id" not in entry
+    assert "id" not in entry
+
+
 def test_the_shop_says_it_is_alive(client):
     assert client.get("/health").json() == {"status": "ok"}
 

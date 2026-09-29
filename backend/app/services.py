@@ -14,6 +14,7 @@ from app.models import (
     Order,
     OrderItem,
     Product,
+    ProductPriceHistory,
     User,
     UserSession,
 )
@@ -57,6 +58,32 @@ def list_products(
         page = rows[:limit]
         return page, page[-1].id
     return rows, None
+
+
+def list_price_history(db: Session, product_id: int) -> list[ProductPriceHistory] | None:
+    # The return type carries the decision: None when there is no such product, an empty
+    # list when the product exists and its price has never changed. They are two different
+    # situations and they get two different answers - a route that received [] for both
+    # could not tell them apart, and would end up saying "this product has never changed
+    # price" about a product that does not exist.
+    #
+    # Looking the product up costs one extra query. The cheap version - query the history
+    # table and return whatever comes back - is one query and the wrong answer, because for
+    # product 999 it answers []. The query is spent on purpose, to keep the distinction.
+    if db.get(Product, product_id) is None:
+        return None
+
+    return list(
+        db.scalars(
+            select(ProductPriceHistory)
+            .where(ProductPriceHistory.product_id == product_id)
+            .order_by(ProductPriceHistory.changed_at, ProductPriceHistory.id)
+        )
+    )
+    # Oldest first, because a history is read forwards. The id is a tie-breaker and not
+    # decoration: changed_at defaults to now(), which in PostgreSQL is the start of the
+    # TRANSACTION, so two price changes committed together carry the exact same timestamp.
+    # Ordering by the date alone would leave their order up to the database.
 
 
 def create_cart(db: Session) -> Cart:
