@@ -21,3 +21,13 @@ class LoginIn(BaseModel):
     # No min_length here on purpose: rejecting a short password at sign-in would say
     # "that is not even the right shape", which is one more thing a guesser learns.
     password: str
+
+
+class AddressIn(BaseModel):
+    recipient_name: str = Field(min_length=1)
+    street: str = Field(min_length=1)
+    city: str = Field(min_length=1)
+    postal_code: str = Field(min_length=1)
+    # Two letters, ISO 3166-1: "ES", "PT", "FR". Storing the country as free text is how
+    # a table ends up holding Spain, España, ESP and es all meaning the same place.
+    country: str = Field(default="ES", min_length=2, max_length=2)

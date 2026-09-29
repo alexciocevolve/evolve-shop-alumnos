@@ -96,6 +96,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp5-modal-description` | `001d_categories_contract` | El detalle del producto en un `<dialog>` sin pedir nada al servidor, y el navegador avisando de que se ha abierto | hecho |
 | `chkp6-cart` | `002_cart_and_orders` | Carrito (mutable, efímero) frente a pedido (inmutable, precio congelado), y un log por cada paso de la compra | hecho |
 | `chkp7-user` | `003_users` | Registro, acceso y sesiones, y qué se puede escribir en un log cuando hay contraseñas y tokens por medio | hecho |
+| `chkp8-address` | `003a_addresses` | Dirección de envío y de facturación, una de cada por persona, y en los logs solo el país | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -344,6 +345,8 @@ tiene vocabulario para un catálogo. En Kibana se filtra por `event.action`:
 | `user.login` | info / warning | `POST /login`, dentro o fuera | `user.id` y `shop.session_ref` si entra; `event.reason` (`wrong_password` o `unknown_email`) y `user.id` o `shop.email_ref` si no |
 | `user.session` | info | Un token de sesión caducado o inventado (`401`) | `shop.session_ref` |
 | `user.logout` | info | `POST /logout` | `shop.session_ref` |
+| `user.address.save` | info | `PUT /me/addresses/{kind}` | `user.id`, `shop.address_kind` (`shipping` o `billing`), `shop.address_country` |
+| `user.address.delete` | info | `DELETE /me/addresses/{kind}` | `user.id`, `shop.address_kind` |
 
 El resumen del carrito son `shop.cart_ref`, `shop.cart_lines`, `shop.cart_units` y
 `shop.cart_total_cents`. Van en cada línea para que cualquiera se entienda sola, sin tener que
@@ -364,6 +367,9 @@ Dos cosas de estas líneas que se repiten en el resto del curso:
   (`shop.session_ref`), igual que el del carrito. Para decir quién es el usuario se usa `user.id`, que
   es el nombre que ECS ya tiene para eso: cuando ECS tiene un campo, se usa el suyo en vez de
   inventar uno bajo `shop.`.
+- **Direcciones.** Nombre, calle, ciudad y código postal señalan una casa concreta, así que no se
+  escriben. Del log sale solo el país (`shop.address_country`), que sirve para saber dónde viven los
+  clientes y no dice quiénes son.
 
 El servidor solo puede apuntar lo que le llega. Abrir el detalle de un producto no le pide nada
 (los datos ya estaban en la página), así que, por sí solo, el backend nunca sabría que ha pasado.

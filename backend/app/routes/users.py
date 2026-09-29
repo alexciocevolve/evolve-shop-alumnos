@@ -1,11 +1,13 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app import services
 from app.db import get_db
-from app.models import User
+from app.models import Address, User
 from app.observability import fingerprint, log
-from app.schemas import LoginIn, UserIn
+from app.schemas import AddressIn, LoginIn, UserIn
 
 router = APIRouter(tags=["users"])
 
@@ -103,3 +105,65 @@ def logout(authorization: str | None = Header(default=None), db: Session = Depen
 @router.get("/me")
 def me(user: User = Depends(current_user)):
     return user_to_dict(user)
+
+
+def address_to_dict(address: Address) -> dict:
+    return {
+        "id": address.id,
+        # The API says "shipping" / "billing" rather than a true/false that the reader has
+        # to decode. The column is a boolean because two kinds is all there is; the answer
+        # is a word because that is what the screen and the address bar are made of.
+        "kind": "billing" if address.is_billing else "shipping",
+        "recipient_name": address.recipient_name,
+        "street": address.street,
+        "city": address.city,
+        "postal_code": address.postal_code,
+        "country": address.country,
+    }
+
+
+@router.get("/me/addresses")
+def list_addresses(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return [address_to_dict(a) for a in services.list_addresses(db, user)]
+
+
+@router.put("/me/addresses/{kind}")
+def save_address(
+    # Literal, so FastAPI itself refuses anything that is not one of the two kinds and
+    # answers 422 before our code runs. No hand-written check, and it shows up in /docs.
+    kind: Literal["shipping", "billing"],
+    body: AddressIn,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    # PUT and not POST: it sets what the address at this slot IS. Sending it twice leaves
+    # the same address, and the caller does not have to know whether one existed already.
+    address = services.save_address(db, user, kind == "billing", body)
+
+    # An address is the most personal thing this shop keeps: name, street and postcode
+    # point to one house. None of that goes in the log. The country is kept because it is
+    # useful (where do our customers live?) and says nothing about who they are.
+    log.info(
+        f"{kind} address saved",
+        extra={
+            "event.action": "user.address.save",
+            "user.id": user.id,
+            "shop.address_kind": kind,
+            "shop.address_country": address.country,
+        },
+    )
+    return address_to_dict(address)
+
+
+@router.delete("/me/addresses/{kind}", status_code=204)
+def delete_address(
+    kind: Literal["shipping", "billing"],
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if not services.delete_address(db, user, kind == "billing"):
+        raise HTTPException(404, f"No {kind} address to delete")
+    log.info(
+        f"{kind} address deleted",
+        extra={"event.action": "user.address.delete", "user.id": user.id, "shop.address_kind": kind},
+    )

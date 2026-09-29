@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Identity, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Identity,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -119,6 +129,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     full_name: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class UserSession(Base):
@@ -134,3 +147,29 @@ class UserSession(Base):
     # A session that lasts forever is a password that never expires.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     user: Mapped["User"] = relationship()
+
+
+class Address(Base):
+    __tablename__ = "addresses"
+    __table_args__ = (
+        # One shipping address and one billing address per person, and the database is
+        # what enforces it: with the rule only in Python, two requests arriving together
+        # would both pass the check and leave two billing addresses behind.
+        UniqueConstraint("user_id", "is_billing", name="uq_addresses_user_is_billing"),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_addresses_user_id"), index=True
+    )
+    # What kind of address this is, kept as a column here rather than as a row in a
+    # separate "address types" table. A second table would earn its keep if the types
+    # carried data of their own or were added without a deployment; two fixed kinds that
+    # the code has to know about anyway do not, and the join would be for nothing.
+    is_billing: Mapped[bool] = mapped_column(server_default=text("false"))
+    recipient_name: Mapped[str] = mapped_column(String(200))
+    street: Mapped[str] = mapped_column(String(200))
+    city: Mapped[str] = mapped_column(String(100))
+    postal_code: Mapped[str] = mapped_column(String(20))
+    country: Mapped[str] = mapped_column(String(2), server_default="ES")  # ISO 3166-1
+    user: Mapped["User"] = relationship(back_populates="addresses")

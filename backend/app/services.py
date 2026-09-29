@@ -7,8 +7,19 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import PLACEHOLDER_CUSTOMER_EMAIL
-from app.models import Cart, CartItem, Category, Order, OrderItem, Product, User, UserSession
+from app.models import (
+    Address,
+    Cart,
+    CartItem,
+    Category,
+    Order,
+    OrderItem,
+    Product,
+    User,
+    UserSession,
+)
 from app.observability import fingerprint, log
+from app.schemas import AddressIn
 from app.security import DUMMY_HASH, hash_password, verify_password
 
 
@@ -269,3 +280,41 @@ def logout(db: Session, token: str) -> None:
     # the browser alone would leave it usable by anyone who had already copied it.
     db.execute(delete(UserSession).where(UserSession.token == token))
     db.commit()
+
+
+def list_addresses(db: Session, user: User) -> list[Address]:
+    # Shipping first, then billing: the screen always shows them in the same order.
+    return list(
+        db.scalars(
+            select(Address).where(Address.user_id == user.id).order_by(Address.is_billing)
+        )
+    )
+
+
+def save_address(db: Session, user: User, is_billing: bool, data: AddressIn) -> Address:
+    """Create this person's shipping or billing address, or change the one they have."""
+    address = db.scalars(
+        select(Address).where(Address.user_id == user.id, Address.is_billing == is_billing)
+    ).first()
+
+    if address is None:
+        address = Address(user_id=user.id, is_billing=is_billing)
+        db.add(address)
+
+    # One function for "create" and for "change": the caller says what the address should
+    # be, not whether it already existed. That is what makes the PUT behind it idempotent.
+    address.recipient_name = data.recipient_name
+    address.street = data.street
+    address.city = data.city
+    address.postal_code = data.postal_code
+    address.country = data.country.upper()
+    db.commit()
+    return address
+
+
+def delete_address(db: Session, user: User, is_billing: bool) -> bool:
+    result = db.execute(
+        delete(Address).where(Address.user_id == user.id, Address.is_billing == is_billing)
+    )
+    db.commit()
+    return result.rowcount > 0  # False when there was nothing to delete
