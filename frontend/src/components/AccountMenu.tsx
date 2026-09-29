@@ -59,6 +59,9 @@ export default function AccountMenu() {
                 Signed in as
                 <strong>{user.email}</strong>
               </p>
+              <button type="button" role="menuitem" onClick={() => go("/account")}>
+                My account
+              </button>
               <button
                 type="button"
                 role="menuitem"

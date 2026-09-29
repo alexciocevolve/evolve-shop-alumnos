@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { CartProvider, useCart } from "./cart";
 import { SessionProvider } from "./session";
 import Header from "./components/Header";
+import Account from "./pages/Account";
 import Auth from "./pages/Auth";
 import Catalog from "./pages/Catalog";
 import Cart from "./pages/Cart";
@@ -32,6 +33,7 @@ export default function App() {
             <CartError />
             <Routes>
               <Route path="/" element={<Catalog />} />
+              <Route path="/account" element={<Account />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/cart" element={<Cart />} />
               <Route path="/orders/:id" element={<OrderConfirmation />} />

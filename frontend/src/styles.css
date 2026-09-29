@@ -631,10 +631,18 @@ tfoot td {
   font-weight: 600;
 }
 
+/* min-width: 0 and width: 100% let a field shrink inside a grid row. Without them an
+   <input> keeps its default width (about 20 characters) and pushes the row off the screen. */
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+}
+
+.field input {
+  width: 100%;
+  min-width: 0;
 }
 
 .field label {
@@ -726,4 +734,73 @@ tfoot td {
   justify-content: center;
   margin-top: 12px;
   text-align: center;
+}
+
+/* Account page */
+.account-page > h2 {
+  margin: 0 0 4px;
+  font-family: var(--heading-font);
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.account-page > .status {
+  padding: 0 0 20px;
+  text-align: left;
+}
+
+.addresses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+
+.address-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: #fff;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+}
+
+.address-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.address-head h3 {
+  margin: 0;
+  font-family: var(--heading-font);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Postal code, city and country on one line, with the country only wide enough for two
+   letters so the box itself says how much is expected. */
+.address-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+}
+
+.address-row .field:last-child input {
+  width: 4.5rem;
+  text-transform: uppercase;
+}
+
+.address-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.address-actions .primary {
+  margin-top: 0;
 }

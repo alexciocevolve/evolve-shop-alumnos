@@ -97,6 +97,7 @@ curl -s "http://localhost:8000/categories"
 | `chkp6-cart` | `002_cart_and_orders` | Carrito (mutable, efímero) frente a pedido (inmutable, precio congelado), y un log por cada paso de la compra | hecho |
 | `chkp7-user` | `003_users` | Registro, acceso y sesiones, y qué se puede escribir en un log cuando hay contraseñas y tokens por medio | hecho |
 | `chkp8-address` | `003a_addresses` | Dirección de envío y de facturación, una de cada por persona, y en los logs solo el país | hecho |
+| `chkp9-update-address` | `003a_addresses` | La página *My account* para editar las dos direcciones | hecho |
 
 Para ver el código de un checkpoint concreto: `git checkout chkp1-catalog` (y `git checkout main` para volver).
 
@@ -249,8 +250,42 @@ docker compose exec db psql -U shop -d shop
 7. Una sesión caducada: la fila sigue existiendo y aun así el token ya no vale, porque lo que manda es la
    fecha, no la existencia de la fila.
 
-> **Todavía no hay direcciones ni pedidos asignados.** Este paso es solo la cuenta: registro, acceso y
-> sesión. Los pedidos siguen yendo al cliente de prueba de cp2.
+### cp3 · Direcciones de envío y facturación
+
+Cada persona tiene **una dirección de envío y una de facturación**, y se editan en *My account*. El tipo
+de dirección es una **columna** de la propia fila, `is_billing`, no una fila en otra tabla de tipos.
+
+8. Guardar las dos direcciones y mirar la tabla: dos filas, una con `is_billing = f` y otra con `t`.
+
+   ```bash
+   docker compose exec db psql -U shop -d shop -c "SELECT id, user_id, is_billing, street, city FROM addresses"
+   ```
+
+9. Cambiar la dirección de envío y volver a mirar: **la misma fila, con el `id` de antes**. No aparece una
+   segunda. Es lo que hace `PUT /me/addresses/shipping`, que fija lo que esa dirección *es*.
+10. Intentar meter a mano una segunda dirección de facturación para la misma persona: la base de datos la
+    rechaza, porque la regla vive ahí y no en Python.
+
+    ```bash
+    docker compose exec db psql -U shop -d shop -c "INSERT INTO addresses (user_id, is_billing, recipient_name, street, city, postal_code) VALUES (1, true, 'X', 'X', 'X', 'X')"
+    ```
+
+11. `PUT /me/addresses/home` responde `422` sin que corra nada nuestro: los dos únicos valores posibles
+    están declarados en el tipo de la ruta, y salen también en `/docs`.
+12. **El `id` de una dirección no aparece en ninguna ruta.** Todo se resuelve desde la sesión, así que no
+    hay ningún número que cambiar para llegar a la dirección de otra persona.
+13. En Kibana, cada vez que se guarda o se borra una dirección aparece un `user.address.save` o un
+    `user.address.delete`. Esta pantalla no ha necesitado ningún log nuevo: todo lo que hace pasa por la
+    API, y la API ya lo cuenta. Mirar qué campos llevan: el país sí; la calle, la ciudad, el código postal
+    y el nombre no.
+
+> **Otra forma de hacerlo.** También se podrían guardar direcciones sin tipo y decidir en cada pedido cuál
+> es la de envío y cuál la de facturación. Aquí se ha elegido la columna a propósito, porque es más fácil de
+> leer. Lo que cuesta se ve en el botón *"Copy from shipping"*: usar la misma dirección para las dos cosas
+> guarda las mismas líneas dos veces.
+
+> **Los pedidos todavía no se asignan.** Siguen yendo al cliente de prueba de cp2; enlazar el pedido con
+> el usuario y con sus direcciones es el paso siguiente.
 
 ## Fuera de alcance
 
