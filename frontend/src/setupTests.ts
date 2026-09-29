@@ -40,6 +40,25 @@ vi.stubGlobal("IntersectionObserver", function fakeIntersectionObserver(
   };
 });
 
+// Same story with <dialog>. jsdom knows the element - HTMLDialogElement exists and `open`
+// is there - but it does not implement showModal() or close(), so the product modal would
+// throw the moment it opened. These stand-ins do the two things this code depends on:
+// the element reports itself open, and close() fires the single `close` event that Escape,
+// the × button and the click outside all end in.
+//
+// Note what they deliberately do NOT do: no backdrop, no focus trap, no Escape handling.
+// Those are the browser's job and the reason the project used a native <dialog> in the
+// first place, so a test here can never say they work. Only a real browser can.
+if (!HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  };
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

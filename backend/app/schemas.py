@@ -1,6 +1,18 @@
 from pydantic import BaseModel, EmailStr, Field
 
 
+class ErrorDetail(BaseModel):
+    """The body every failed request gets back: {"detail": "..."}.
+
+    Declaring it is the only way it reaches the generated OpenAPI document. FastAPI
+    writes that document from what a route DECLARES - the signature and the decorator -
+    and never reads the function body, so an HTTPException raised inside one is invisible
+    to it. See `error()` in routes/shared.py.
+    """
+
+    detail: str
+
+
 class QuantityIn(BaseModel):
     # ge=1 means a request asking for zero units is rejected by FastAPI before any of our
     # code runs, with a 422. Removing a line is what DELETE is for, not a quantity of zero.

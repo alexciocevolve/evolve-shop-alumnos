@@ -12,15 +12,13 @@ vi.mock("../api", () => ({
   listCategories: vi.fn(),
   listProducts: vi.fn(),
   reportProductView: vi.fn(),
+  getPriceHistory: vi.fn(),
 }));
 vi.mock("../cart", () => ({
   useCart: () => ({ cart: null, setQuantity: vi.fn() }),
 }));
-// jsdom has no <dialog>.showModal(), and the modal is not what this file tests: only that
-// opening a product is reported to the server. An empty stand-in is enough.
-vi.mock("../components/ProductModal", () => ({ default: () => null }));
 
-const { listCategories, listProducts, reportProductView } = await import("../api");
+const { listCategories, listProducts, reportProductView, getPriceHistory } = await import("../api");
 
 const CATEGORIES: Category[] = [
   { id: 1, name: "laptops" },
@@ -138,6 +136,25 @@ describe("Catalog", () => {
     expect(await screen.findByText("Product 1")).toBeInTheDocument();
   });
 
+  it("asks for no price history at all until somebody opens a product", async () => {
+    vi.mocked(listProducts).mockResolvedValue(page([1, 2, 3], null));
+    vi.mocked(getPriceHistory).mockResolvedValue([]);
+
+    render(<Catalog />);
+    await screen.findByText("Product 3");
+
+    // Three cards on screen and not one request. This is the whole reason the history is
+    // not part of GET /products: on a full page it would be twelve requests to draw
+    // something nobody is looking at. The N+1 that never happens because nobody asked.
+    expect(getPriceHistory).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Product 2" }));
+
+    // And now exactly one, for the one product that was opened.
+    await waitFor(() => expect(getPriceHistory).toHaveBeenCalledTimes(1));
+    expect(getPriceHistory).toHaveBeenCalledWith(2);
+  });
+
   it("draws the buttons the database sent, not a list written in the page", async () => {
     vi.mocked(listProducts).mockResolvedValue(page([1], null));
     vi.mocked(listCategories).mockResolvedValue([{ id: 7, name: "cables" }]);
@@ -151,6 +168,7 @@ describe("Catalog", () => {
 
   it("tells the server once when a product is opened, even under StrictMode", async () => {
     vi.mocked(listProducts).mockResolvedValue(page([1], null));
+    vi.mocked(getPriceHistory).mockResolvedValue([]);
 
     // StrictMode runs every effect twice while developing. The view is reported from the
     // click and not from an effect inside the modal, so it must still be sent only once.

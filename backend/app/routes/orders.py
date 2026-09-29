@@ -6,7 +6,7 @@ from app.db import get_db
 from app.models import Cart, Order, User
 from app.observability import fingerprint, log
 from app.routes.cart import current_cart
-from app.routes.shared import address_to_dict
+from app.routes.shared import NOT_SIGNED_IN, address_to_dict, error
 from app.routes.users import current_user
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -38,7 +38,18 @@ def order_to_dict(order: Order) -> dict:
     }
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    responses={
+        **NOT_SIGNED_IN,
+        404: error("No cart with that X-Cart-Token"),
+        409: error(
+            "The cart is empty, a line is short of stock, "
+            "or the account has no shipping address yet"
+        ),
+    },
+)
 def create_order(
     response: Response,
     cart: Cart = Depends(current_cart),
@@ -101,7 +112,7 @@ def create_order(
     return order_to_dict(order)
 
 
-@router.get("")
+@router.get("", responses=NOT_SIGNED_IN)
 def list_orders(user: User = Depends(current_user), db: Session = Depends(get_db)):
     orders = services.list_orders(db, user)
     # How many orders the person has when they look at their account. Put next to
@@ -113,7 +124,16 @@ def list_orders(user: User = Depends(current_user), db: Session = Depends(get_db
     return [order_to_dict(order) for order in orders]
 
 
-@router.get("/{order_id}")
+@router.get(
+    "/{order_id}",
+    responses={
+        **NOT_SIGNED_IN,
+        # Documented as one answer on purpose, because it IS one answer. Splitting it into
+        # "not found" and "not yours" in the documentation would hand back exactly the
+        # information the 404 was chosen to withhold.
+        404: error("No such order, OR it belongs to somebody else - the same answer to both"),
+    },
+)
 def get_order(
     order_id: int,
     user: User = Depends(current_user),

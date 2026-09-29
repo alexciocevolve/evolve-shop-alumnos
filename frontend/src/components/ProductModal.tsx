@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { Product } from "../api";
 import { useCart } from "../cart";
 import { formatPrice } from "../format";
+import PriceHistory from "./PriceHistory";
 
 // A native <dialog>, not a <div> pretending to be one. The browser already gives us,
 // for free and correctly: the dark backdrop, closing with Escape, keeping the keyboard
@@ -66,6 +67,11 @@ export default function ProductModal({
           </button>
         </div>
       </div>
+
+      {/* Everything above came with the product the card already had, so the modal opens
+          instantly and with zero requests. This is the one thing the listing never sent,
+          so it is the one thing that has to be asked for - and only now, for this product. */}
+      <PriceHistory productId={product.id} />
 
       <button
         type="button"

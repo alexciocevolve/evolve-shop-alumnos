@@ -5,7 +5,7 @@ from app import services
 from app.db import get_db
 from app.models import Cart
 from app.observability import fingerprint, log
-from app.routes.shared import absolute_url
+from app.routes.shared import NO_CART, absolute_url, error
 from app.schemas import QuantityIn
 
 router = APIRouter(prefix="/cart", tags=["cart"])
@@ -70,12 +70,20 @@ def create_cart(request: Request, db: Session = Depends(get_db)):
     return cart_to_dict(cart, request)
 
 
-@router.get("")
+@router.get("", responses=NO_CART)
 def get_cart(request: Request, cart: Cart = Depends(current_cart)):
     return cart_to_dict(cart, request)
 
 
-@router.put("/items/{product_id}")
+@router.put(
+    "/items/{product_id}",
+    responses={
+        404: error("No cart with that X-Cart-Token, or no product with that id"),
+        # 409 and not 400: the request was understood perfectly and a RULE said no. The
+        # difference matters to a client, which can retry a 409 with a smaller quantity.
+        409: error("Not enough stock for the quantity asked for"),
+    },
+)
 def set_cart_item(
     product_id: int,
     body: QuantityIn,
@@ -125,7 +133,10 @@ def set_cart_item(
     return cart_to_dict(updated, request)
 
 
-@router.delete("/items/{product_id}")
+@router.delete(
+    "/items/{product_id}",
+    responses={404: error("No cart with that X-Cart-Token, or that product is not in it")},
+)
 def remove_cart_item(
     product_id: int,
     request: Request,

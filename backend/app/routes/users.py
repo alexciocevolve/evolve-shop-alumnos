@@ -7,7 +7,7 @@ from app import services
 from app.db import get_db
 from app.models import User
 from app.observability import fingerprint, log
-from app.routes.shared import address_to_dict
+from app.routes.shared import NOT_SIGNED_IN, address_to_dict, error
 from app.schemas import AddressIn, LoginIn, UserIn
 
 router = APIRouter(tags=["users"])
@@ -72,7 +72,11 @@ def user_to_dict(user: User) -> dict:
     }
 
 
-@router.post("/users", status_code=201)
+@router.post(
+    "/users",
+    status_code=201,
+    responses={409: error("That email is already registered")},
+)
 def register(body: UserIn, db: Session = Depends(get_db)):
     user = services.register_user(db, body.email, body.password, body.full_name)
     if user is None:
@@ -95,7 +99,12 @@ def register(body: UserIn, db: Session = Depends(get_db)):
     return user_to_dict(user)
 
 
-@router.post("/login")
+@router.post(
+    "/login",
+    # One sentence for both, in the documentation as well as in the answer. Writing
+    # "unknown email" and "wrong password" as separate cases here would undo the decision.
+    responses={401: error("Wrong password, or no account with that email - one answer to both")},
+)
 def login(body: LoginIn, db: Session = Depends(get_db)):
     session = services.login(db, body.email, body.password)
     if session is None:
@@ -106,7 +115,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     return {"token": session.token}
 
 
-@router.post("/logout", status_code=204)
+@router.post("/logout", status_code=204, responses=NOT_SIGNED_IN)
 def logout(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     token = _bearer_token(authorization)
     services.logout(db, token)
@@ -118,17 +127,17 @@ def logout(authorization: str | None = Header(default=None), db: Session = Depen
     )
 
 
-@router.get("/me")
+@router.get("/me", responses=NOT_SIGNED_IN)
 def me(user: User = Depends(current_user)):
     return user_to_dict(user)
 
 
-@router.get("/me/addresses")
+@router.get("/me/addresses", responses=NOT_SIGNED_IN)
 def list_addresses(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return [address_to_dict(a) for a in services.list_addresses(db, user)]
 
 
-@router.put("/me/addresses/{kind}")
+@router.put("/me/addresses/{kind}", responses=NOT_SIGNED_IN)
 def save_address(
     # Literal, so FastAPI itself refuses anything that is not one of the two kinds and
     # answers 422 before our code runs. No hand-written check, and it shows up in /docs.
@@ -160,7 +169,11 @@ def save_address(
     return address_to_dict(address)
 
 
-@router.delete("/me/addresses/{kind}", status_code=204)
+@router.delete(
+    "/me/addresses/{kind}",
+    status_code=204,
+    responses={**NOT_SIGNED_IN, 404: error("This account has no address of that kind in use")},
+)
 def delete_address(
     kind: Literal["shipping", "billing"],
     user: User = Depends(current_user),

@@ -280,6 +280,59 @@ main {
   line-height: 1.5;
 }
 
+/* Price history, below the fold of the modal: it is extra, never the headline. */
+.price-history,
+.price-history-note {
+  padding: 0 24px 24px;
+}
+
+.price-history-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.price-history h3 {
+  margin: 0 0 8px;
+  font-family: var(--heading-font);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.price-history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  /* Numbers line up by digit, so a column of prices can be compared by looking down it. */
+  font-variant-numeric: tabular-nums;
+}
+
+.price-history th,
+.price-history td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+
+.price-history th:first-child,
+.price-history td:first-child {
+  text-align: left;
+}
+
+.price-history th {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.price-history tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.price-before {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .modal-close {
   position: absolute;
   top: 12px;

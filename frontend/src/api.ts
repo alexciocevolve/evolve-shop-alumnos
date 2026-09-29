@@ -72,6 +72,20 @@ export function reportProductView(id: number) {
   fetch(`${BASE}/products/${id}/views`, { method: "POST" }).catch(() => {});
 }
 
+// One row per price change, oldest first, the way the API sends it. Each row stands on its
+// own: it says what the price came from and what it went to, without needing the row before.
+export type PriceChange = {
+  changed_at: string;
+  previous_price_cents: number;
+  price_cents: number;
+};
+
+// NOT part of listProducts on purpose. Asking for the history of the 12 products on a page
+// would be 12 extra requests to draw something nobody is looking at; this is asked for one
+// product, when somebody opens it. See components/PriceHistory.tsx.
+export const getPriceHistory = (id: number) =>
+  request<PriceChange[]>(`/products/${id}/price-history`);
+
 export type AddressKind = "shipping" | "billing";
 
 export type Address = {

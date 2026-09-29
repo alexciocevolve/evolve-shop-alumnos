@@ -5,7 +5,7 @@ from app import services
 from app.db import get_db
 from app.models import Product, ProductPriceHistory
 from app.observability import log
-from app.routes.shared import absolute_url
+from app.routes.shared import absolute_url, error
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -106,7 +106,7 @@ def log_product_view(product: Product, source: str) -> None:
     )
 
 
-@router.get("/{product_id}")
+@router.get("/{product_id}", responses={404: error("No product with that id")})
 def get_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     product = find_product_or_404(db, product_id)
     log_product_view(product, source="api")
@@ -115,7 +115,12 @@ def get_product(product_id: int, request: Request, db: Session = Depends(get_db)
 
 # response_class=Response: an empty answer, without the "content-type: application/json"
 # header that FastAPI would otherwise add to a body that does not exist.
-@router.post("/{product_id}/views", status_code=204, response_class=Response)
+@router.post(
+    "/{product_id}/views",
+    status_code=204,
+    response_class=Response,
+    responses={404: error("No product with that id")},
+)
 def record_product_view(product_id: int, db: Session = Depends(get_db)):
     # The detail modal does not ask the server for anything, because the list already
     # brought the description. Good for speed, but it means the server never finds out
@@ -136,7 +141,13 @@ def price_change_to_dict(change: ProductPriceHistory) -> dict:
     }
 
 
-@router.get("/{product_id}/price-history")
+@router.get(
+    "/{product_id}/price-history",
+    # The distinction this endpoint exists for, now written where a caller can read it:
+    # no such product is a 404, and a product that has simply never changed price is a
+    # 200 with an empty list. Undocumented, a client has no way to know which it will get.
+    responses={404: error("No product with that id. A product with no price changes is 200 []")},
+)
 def get_price_history(product_id: int, db: Session = Depends(get_db)):
     history = services.list_price_history(db, product_id)
 
