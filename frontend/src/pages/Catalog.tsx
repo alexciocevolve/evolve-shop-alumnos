@@ -5,6 +5,10 @@ import ProductCard from "../components/ProductCard";
 // The API has no endpoint that lists the categories, so they are fixed here.
 const CATEGORIES = ["laptops", "monitors", "peripherals", "storage", "networking"];
 
+// This page does NOT use the useData hook, and that is the point: useData REPLACES its data
+// every time it loads (one screen, one answer). Here each answer is ADDED to the previous
+// ones, so the state has to live in the page. The idea of ignoring an answer that arrives
+// late is the same one; useData calls it `stale`, and here it is the `generation` counter.
 export default function Catalog() {
   const [category, setCategory] = useState<string | undefined>();
   const [items, setItems] = useState<Product[]>([]);
@@ -65,7 +69,11 @@ export default function Catalog() {
   return (
     <>
       <div className="filters">
-        <button className="chip" aria-pressed={category === undefined} onClick={() => selectCategory(undefined)}>
+        <button
+          className="chip"
+          aria-pressed={category === undefined}
+          onClick={() => selectCategory(undefined)}
+        >
           All
         </button>
         {CATEGORIES.map((c) => (

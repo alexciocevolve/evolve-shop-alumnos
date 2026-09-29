@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300" role="img" aria-label="22&quot; Office Monitor">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#4c1d95"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-opacity="0.92" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="100" y="45" width="200" height="125" rx="8"/><path d="M200 170V200M155 205H245"/>
+  </g>
+  <rect y="240" width="400" height="60" fill="#000" fill-opacity="0.25"/>
+  <text x="200" y="277" text-anchor="middle" font-family="system-ui, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#fff">22&quot; Office Monitor</text>
+</svg>

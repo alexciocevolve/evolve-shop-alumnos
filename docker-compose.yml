@@ -48,6 +48,7 @@ services:
       # Qué páginas pueden llamar a la API. Sale de .env (o del terminal); si no está, el
       # servidor de Vite de este mismo compose.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      IMAGES_DIR: /app/images
     depends_on:
       db:
         condition: service_healthy
@@ -59,6 +60,8 @@ services:
       start_period: 15s # la migración corre antes de que arranque el servidor
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/images:/app/images:ro
 
   frontend:
     build: ./frontend

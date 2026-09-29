@@ -1,14 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.config import CORS_ORIGINS
-from app.observability import configure_logging, log, log_requests
+from app.config import CORS_ORIGINS, IMAGES_DIR
 from app.routes import products
-
-# Before anything else builds a logger of its own. Calling it later would leave whatever
-# logged during import writing in a different format, and those are the lines that explain
-# a start-up that failed.
-configure_logging()
 
 app = FastAPI(title="Shop API")
 
@@ -23,17 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# One line per request, with its method, path, status, duration and id.
-app.middleware("http")(log_requests)
-
-
-@app.on_event("startup")
-def say_hello():
-    # Not decoration: it is the line that proves the whole chain works. If this turns up in
-    # Kibana, the shop is writing JSON, Filebeat is reading it and Elasticsearch is
-    # storing it - three things confirmed by one message.
-    log.info("shop started", extra={"event.action": "startup"})
-
 
 @app.get("/health")
 def health():
@@ -41,3 +25,8 @@ def health():
 
 
 app.include_router(products.router)
+
+# Static files: GET /images/product-1.svg returns that file from IMAGES_DIR. No route
+# function, no database: the server just reads the file and sends it (with ETag and
+# Last-Modified, so browsers can ask "has it changed?" and get a cheap 304).
+app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")

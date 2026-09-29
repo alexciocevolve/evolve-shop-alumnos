@@ -16,7 +16,7 @@ dist/
 .DS_Store
 
 # Datos locales: la carpeta de PostgreSQL vive aqui y NO va al repositorio.
-# Se coló una vez, con 1708 ficheros binarios de una base de datos en marcha.
-# Cuando lleguen las imagenes de producto habra que afinarlo a `data/*` con un
-# `!data/images/`, porque esas si las nombran las migraciones y tienen que estar.
+# `!data/images/`, porque esas si las nombran las migraciones y tienen que estar. 
+# Sólo se ignoran los archivos de datos que no son imágenes SVG
 data/
+!data/images/

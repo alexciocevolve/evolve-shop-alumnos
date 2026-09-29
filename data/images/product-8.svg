@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300" role="img" aria-label="Mechanical Keyboard">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-opacity="0.92" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="80" y="90" width="240" height="110" rx="12"/><path d="M105 118H295M105 145H295" stroke-dasharray="14 12"/><path d="M130 174H270"/>
+  </g>
+  <rect y="240" width="400" height="60" fill="#000" fill-opacity="0.25"/>
+  <text x="200" y="277" text-anchor="middle" font-family="system-ui, 'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600" fill="#fff">Mechanical Keyboard</text>
+</svg>

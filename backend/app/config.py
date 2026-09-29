@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -15,3 +16,9 @@ CORS_ORIGINS = [
     for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
+
+# Folder with the product images; the API serves it as static files under /images.
+# parents[2] walks up from app/config.py to the root of the repository: app -> backend -> root.
+# Docker mounts that same folder somewhere else and sets IMAGES_DIR to say where.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+IMAGES_DIR = Path(os.environ.get("IMAGES_DIR", REPOSITORY_ROOT / "data" / "images"))
